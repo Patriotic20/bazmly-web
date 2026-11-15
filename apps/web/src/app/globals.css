@@ -1,0 +1,27 @@
+@import "tailwindcss";
+@import "@bazmly/ui/theme.css";
+/* Umumiy paketlardagi Tailwind klasslari ham skanerlansin */
+@source "../../../../packages/ui/src";
+
+
+html, body { background: #fff; color: var(--color-ink); }
+/* Bron tanlash g'ildiragi: markaziy qator va qo'shnilari */
+:root { --wheel-0: #000; --wheel-1: #A0A0A0; --wheel-2: #D9D9D9; }
+
+/* Dark mode (Figma "Bazmly dark"): sahifa #2C2C2C, matn oq */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { color-scheme: dark; --wheel-0: #fff; --wheel-1: #BCBCBC; --wheel-2: #949494; }
+  :root:not([data-theme="light"]) body, :root:not([data-theme="light"]) { background: #2C2C2C; color: #fff; }
+}
+:root[data-theme="dark"] { color-scheme: dark; --wheel-0: #fff; --wheel-1: #BCBCBC; --wheel-2: #949494; }
+:root[data-theme="dark"], :root[data-theme="dark"] body { background: #2C2C2C; color: #fff; }
+
+.material-symbols-rounded {
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+}
+
+
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+

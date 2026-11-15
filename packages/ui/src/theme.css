@@ -1,0 +1,52 @@
+/* Bazmly umumiy dizayn tokenlari — mijoz sayti va hamkor paneli uchun bitta manba.
+   Ilovaning globals.css faylida: @import "tailwindcss"; dan keyin @import "@bazmly/ui/theme.css"; */
+@theme {
+  /* Bazmly brend tokenlari — Figma PNG'lardan aniqlashtiriladi */
+  --color-brand: #E85102;
+  --color-brand-50: #FFF3EC;
+  --color-brand-600: #C94500;
+  --color-ink: #1A1A1A;
+  --color-muted: #6B6B6B;
+  --color-line: #ECECEC;
+  --color-surface: #F7F7F7;
+  --color-success: #16A34A;
+
+  --font-sans: var(--font-jakarta, "Plus Jakarta Sans"), "Plus Jakarta Sans", system-ui, sans-serif;
+}
+
+@theme {
+  --breakpoint-hd: 110rem; /* 1760px */
+  --breakpoint-wide: 116.25rem; /* 1860px — kontent + o‘ng panel to‘liq sig‘adi */
+}
+
+/* Sahifa konteynerlari: Figma'da kontent 1274px, header 1700px.
+   Kichik ekranlarda chetdan 16px (md: 24px) joy qoladi. */
+@utility container-page {
+  width: min(1274px, calc(100% - 2rem));
+  margin-inline: auto;
+  @media (width >= 48rem) { width: min(1274px, calc(100% - 3rem)); }
+}
+@utility container-wide {
+  width: min(1700px, calc(100% - 2rem));
+  margin-inline: auto;
+  @media (width >= 48rem) { width: min(1700px, calc(100% - 3rem)); }
+}
+
+@keyframes splash-in {
+  from { opacity: 0; transform: scale(.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Fit: sig'masa bo'sh joy qisqaradi — `fit-tight:min-h-0` kabi ishlatiladi */
+@custom-variant fit-tight (&:where([data-tight] *, [data-tight]));
+
+/* Dark mode: qurilma tungi rejimda bo'lsa avtomatik (prefers-color-scheme).
+   <html data-theme="light|dark"> — qo'lda tanlash uchun (ustun turadi). */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) { @slot; }
+  }
+  &:where([data-theme="dark"], [data-theme="dark"] *) { @slot; }
+}

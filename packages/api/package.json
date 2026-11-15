@@ -1,0 +1,25 @@
+{
+  "name": "@bazmly/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bazmly ma'lumot qatlami: turlar va backend bilan ishlash (hozircha brauzer xotirasi)",
+  "exports": {
+    "./client": "./src/client.ts",
+    "./booking": "./src/booking.ts",
+    "./payment": "./src/payment.ts",
+    "./regions": "./src/regions.ts",
+    "./user": "./src/user.ts",
+    "./venues": "./src/venues.ts",
+    "./vouchers": "./src/vouchers.ts",
+    "./partner": "./src/partner.ts",
+    "./partnerBookings": "./src/partnerBookings.ts",
+    "./staff": "./src/staff.ts",
+    "./orders": "./src/orders.ts",
+    "./menu": "./src/menu.ts",
+    "./lang": "./src/lang.ts",
+    "./hall": "./src/hall.ts"
+  },
+  "peerDependencies": {
+    "react": "^19"
+  }
+}

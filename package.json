@@ -1,0 +1,19 @@
+{
+  "name": "bazmly",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @bazmly/web",
+    "dev:partner": "npm run dev -w @bazmly/partner",
+    "build": "npm run build -w @bazmly/web && npm run build -w @bazmly/partner",
+    "build:web": "npm run build -w @bazmly/web",
+    "build:partner": "npm run build -w @bazmly/partner",
+    "start": "npm run start -w @bazmly/web",
+    "start:partner": "npm run start -w @bazmly/partner",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "tsc -p apps/web --noEmit && tsc -p apps/partner --noEmit"
+  }
+}

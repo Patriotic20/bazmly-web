@@ -1,0 +1,13 @@
+@import "tailwindcss";
+@import "@bazmly/ui/theme.css";
+/* Umumiy paketlardagi Tailwind klasslari ham skanerlansin */
+@source "../../../../packages/ui/src";
+
+@theme {
+  --font-inter: "Inter", system-ui, sans-serif;
+  --font-roboto: "Roboto", system-ui, sans-serif;
+}
+
+html, body { background: #fff; color: var(--color-ink); }
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
