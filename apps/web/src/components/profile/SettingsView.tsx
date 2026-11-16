@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDownIcon, ChevronRightIcon, ImagePlusIcon, TrashIcon } from "@bazmly/ui/icons";
 import { useToast } from "@bazmly/ui/Toast";
 import { readLocation, REGIONS, saveLocation } from "@bazmly/api/regions";
-import { readUser, resizeImage, saveUser, wipeAccount } from "@bazmly/api/user";
+import { errorText } from "@bazmly/api/client";
+import { deleteAccount, readUser, resizeImage, saveUser, updateProfile } from "@bazmly/api/user";
 import { ConfirmSheet, FrameButton, ProfileFrame } from "./ProfileFrame";
 import { UserAvatar } from "./ProfileView";
 
@@ -45,10 +46,11 @@ export function SettingsView() {
     try { setAvatar(await resizeImage(f)); } catch { toast("Rasmni o‘qib bo‘lmadi"); }
   };
 
-  const submit = () => {
+  const submit = async () => {
     setTouched(true);
     if (!nameOk || !phoneOk) return;
-    // TODO: backend — telefon o'zgarsa SMS bilan tasdiqlash
+    // Ism backendga yoziladi. Telefonni o'zgartirish va rasm yuklash uchun mijoz API'si yo'q — ular shu qurilmada saqlanadi.
+    try { await updateProfile({ name: name.trim() }); } catch (e) { return toast(errorText(e)); }
     if (!saveUser({ name: name.trim(), phone: `+998${phone}`, avatar })) return toast("Saqlab bo‘lmadi — rasm juda katta");
     const cur = readLocation();
     if (cur.region !== region) saveLocation({ region });
@@ -106,7 +108,7 @@ export function SettingsView() {
           title="Akkauntni o‘chirmoqchimisiz?" action="Akkauntni o‘chirish"
           icon={<TrashIcon className="size-[24px]" />}
           onClose={() => setSheet(false)}
-          onConfirm={() => { wipeAccount(); router.replace("/onboarding"); }}
+          onConfirm={async () => { await deleteAccount(); router.replace("/onboarding"); }}
         />
       )}
     </ProfileFrame>

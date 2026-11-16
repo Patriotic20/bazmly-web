@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { createAccount, daysText, hoursText, isSignedIn, readAccount, saveDraft, totalSeats, type AdvanceDays, type PartnerDraft } from "@bazmly/api/partner";
+import { createAccountRemote, daysText, hoursText, isSignedIn, readAccount, saveDraft, totalSeats, type AdvanceDays, type PartnerDraft } from "@bazmly/api/partner";
 import { ChevronRightIcon } from "@bazmly/ui/icons";
 
 const CloseIcon = ({ className }: { className?: string }) => (
@@ -28,7 +28,7 @@ export default function SchedulePage() {
   }, [draft]);
 
   const patch = (p: PartnerDraft) => setD(saveDraft(p));
-  const confirm = () => {
+  const confirm = async () => {
     if (!d.seats) return toast("Umumiy joylar sonini kiriting");
     if (!d.hours) return toast("Ish vaqtini belgilang");
     if (!d.days) return toast("Ish kunlarini belgilang");
@@ -36,7 +36,7 @@ export default function SchedulePage() {
     // Yangi akkaunt qo'shilmoqda: telefon allaqachon tasdiqlangan — darhol yaratiladi
     const owner = readAccount();
     if (d.adding && owner && isSignedIn()) {
-      if (!createAccount(owner.phone, true)) return toast("Akkauntni yaratib bo‘lmadi");
+      if (!(await createAccountRemote(owner.phone, true))) return toast("Akkauntni yaratib bo‘lmadi");
       return router.push("/royxatdan-otish/tayyor");
     }
     router.push("/royxatdan-otish/akkaunt");

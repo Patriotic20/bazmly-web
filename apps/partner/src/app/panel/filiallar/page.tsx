@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { addressText, readAccount, type PartnerAccount } from "@bazmly/api/partner";
-import { formatPhone, readBranches, readStaff, type Branch, type Staff } from "@bazmly/api/staff";
+import { formatPhone, readBranches, readStaff, syncBranches, syncStaff, type Branch, type Staff } from "@bazmly/api/staff";
 import { PlusIcon } from "@bazmly/ui/icons";
 import { PageHead } from "@/components/PageHead";
 import { PartnerCard } from "@/components/PartnerCard";
@@ -16,7 +16,10 @@ const hh = (t: string) => t.replace(/^0(\d)/, "$1");
 export default function Branches() {
   const router = useRouter();
   const [data, setData] = useState<{ acc: PartnerAccount | null; list: Branch[]; staff: Staff[] } | null>(null);
-  useEffect(() => { setData({ acc: readAccount(), list: readBranches(), staff: readStaff() }); }, []);
+  useEffect(() => {
+    setData({ acc: readAccount(), list: readBranches(), staff: readStaff() });
+    Promise.all([syncBranches(), syncStaff()]).then(([list, staff]) => setData({ acc: readAccount(), list, staff })).catch(() => {});
+  }, []);
   if (!data) return null;
 
   if (!data.list.length) {

@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { isSignedIn } from "@bazmly/api/partner";
+import { isSignedIn, refreshAccounts } from "@bazmly/api/partner";
 import { Screen } from "@bazmly/ui/Fit";
 import { PanelHeader } from "@/components/PanelHeader";
 
@@ -14,7 +14,7 @@ export default function PanelLayout({ children }: { children: React.ReactNode })
   const router = useRouter();
   const pathname = usePathname();
   const [ok, setOk] = useState(false);
-  useEffect(() => { if (!isSignedIn()) router.replace("/"); else setOk(true); }, [router]);
+  useEffect(() => { if (!isSignedIn()) router.replace("/"); else { setOk(true); void refreshAccounts(); } }, [router]);
   if (!ok) return null;
   if (SCROLL_PAGES.includes(pathname)) return (
     <div className="min-h-svh pb-16">

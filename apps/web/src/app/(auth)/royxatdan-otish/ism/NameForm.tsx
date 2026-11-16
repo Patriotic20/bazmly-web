@@ -1,15 +1,18 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AuthCard, primaryBtn, textInput } from "@/components/auth/AuthCard";
-import { USER_KEY } from "@bazmly/api/user";
+import { register } from "@bazmly/api/auth";
+import { errorText } from "@bazmly/api/client";
+import { syncMe } from "@bazmly/api/user";
 import { PHONE_KEY } from "../RegisterForm";
 
 export function NameForm() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const busy = useRef(false);
 
   useEffect(() => {
     let phone: string | null = null;
@@ -17,21 +20,26 @@ export function NameForm() {
     if (!phone) router.replace("/royxatdan-otish");
   }, [router]);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const value = name.trim();
     if (value.length < 2) {
       setError("Ismingizni kiriting");
       return;
     }
-    let phone = "";
+    if (busy.current) return;
+    busy.current = true;
     try {
-      phone = sessionStorage.getItem(PHONE_KEY) ?? "";
-      // TODO: backend — POST /auth/register; hozircha foydalanuvchi brauzerda saqlanadi
-      localStorage.setItem(USER_KEY, JSON.stringify({ name: value, phone }));
+      const phone = sessionStorage.getItem(PHONE_KEY) ?? "";
+      await register(phone, value);
+      await syncMe();
       sessionStorage.removeItem(PHONE_KEY);
-    } catch {}
-    router.replace("/");
+      router.replace("/");
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      busy.current = false;
+    }
   };
 
   return (

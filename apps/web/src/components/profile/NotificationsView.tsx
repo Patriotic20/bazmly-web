@@ -4,29 +4,11 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { BazmlyMark } from "@bazmly/ui/BazmlyMark";
 import { useToast } from "@bazmly/ui/Toast";
+import { fetchNotes, markAllNotesRead, markNoteRead, type Note } from "@bazmly/api/notifications";
 import { FrameButton, ProfileFrame } from "./ProfileFrame";
 
-type Note = { id: string; text: string; at: number; read?: boolean };
-const KEY = "bazmly:notifications";
+// Xabarlar backend `/v1/notifications` dan keladi
 const H = 3600_000, D = 24 * H;
-
-// Namunaviy xabarlar (backend ulanganda API'dan keladi)
-function seed(now: number): Note[] {
-  return [
-    { id: "n1", text: "Bazmly yanada qulay bo‘ldi! 🚀 Yangi imkoniyatlarni hoziroq ko‘ring", at: now - 2 * H },
-    { id: "n2", text: "Rest One’da shu hafta 10% chegirma 🎉", at: now - 2 * D },
-    { id: "n3", text: "Yangi to‘yxonalar qo‘shildi: Sayqal va Panorama", at: now - 4 * D, read: true },
-    { id: "n4", text: "Profilingizni to‘ldiring va maxsus takliflardan birinchi bo‘lib xabardor bo‘ling", at: now - 12 * D, read: true },
-    { id: "n5", text: "Bazmly’ga xush kelibsiz! Restoran va to‘yxonalarni bir necha soniyada band qiling", at: now - 20 * D, read: true },
-  ];
-}
-function readNotes(): Note[] {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) return JSON.parse(raw);
-    const s = seed(Date.now()); localStorage.setItem(KEY, JSON.stringify(s)); return s;
-  } catch { return seed(Date.now()); }
-}
 const pad = (n: number) => String(n).padStart(2, "0");
 const fmt = (t: number) => { const d = new Date(t); return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 
@@ -35,7 +17,7 @@ export function NotificationsView() {
   const router = useRouter();
   const toast = useToast();
   const [notes, setNotes] = useState<Note[] | null>(null);
-  useEffect(() => setNotes(readNotes()), []);
+  useEffect(() => { fetchNotes().then(setNotes).catch(() => setNotes([])); }, []);
 
   const groups = useMemo(() => {
     const now = new Date();
@@ -51,14 +33,14 @@ export function NotificationsView() {
 
   const markAll = () => {
     const next = (notes ?? []).map((n) => ({ ...n, read: true }));
-    try { localStorage.setItem(KEY, JSON.stringify(next)); } catch {}
+    if ((notes ?? []).some((n) => !n.read)) markAllNotesRead().catch(() => {});
     setNotes(next);
     toast("Barcha xabarlar o‘qildi");
     router.push("/profil");
   };
   const open = (id: string) => {
     const next = (notes ?? []).map((n) => (n.id === id ? { ...n, read: true } : n));
-    try { localStorage.setItem(KEY, JSON.stringify(next)); } catch {}
+    if (notes?.find((n) => n.id === id && !n.read)) markNoteRead(id).catch(() => {});
     setNotes(next);
   };
 

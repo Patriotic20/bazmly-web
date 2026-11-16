@@ -4,9 +4,11 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
-  elapsed, finishOrder, openFromBooking, orderTotal, readOrders, readTables, tableStates, uzs, type Order, type TableState, type Zone,
+  elapsed, finishOrder, openFromBooking, orderTotal, readOrders, readTables, syncOrders, syncTables, tableStates, uzs, type Order, type TableState, type Zone,
 } from "@bazmly/api/orders";
-import { fromIso, iso, longDate, readBookings, setBookingStatus, type BookingStatus, type PartnerBooking } from "@bazmly/api/partnerBookings";
+import { errorText } from "@bazmly/api/client";
+import { fromIso, iso, longDate, nextDays, readBookings, setBookingStatus, syncBookings, type BookingStatus, type PartnerBooking } from "@bazmly/api/partnerBookings";
+import { syncStaff } from "@bazmly/api/staff";
 import { PlusIcon } from "@bazmly/ui/icons";
 import { useToast } from "@bazmly/ui/Toast";
 import { CheckCircleFillIcon, ClockOutlineIcon, PersonFillIcon, FilterLinesIcon, GroupFillIcon, TableFillIcon } from "@/components/panelIcons";
@@ -43,7 +45,11 @@ export function Orders() {
 
   useEffect(() => {
     setOrders(readOrders()); setBookings(readBookings()); setNow(new Date());
-    const t = setInterval(() => setNow(new Date()), 30_000);
+    // Stollar, hodimlar (ofitsiant ismi) va bronlar (mijoz ismi) — so'ng cheklar
+    const load = () => Promise.all([syncTables(), syncStaff().catch(() => []), syncBookings(nextDays(1)).then(setBookings)])
+      .then(() => syncOrders()).then(setOrders).catch(() => {});
+    void load();
+    const t = setInterval(() => { setNow(new Date()); void syncOrders().then(setOrders).catch(() => {}); }, 30_000);
     return () => clearInterval(t);
   }, []);
 
@@ -75,9 +81,9 @@ export function Orders() {
   const waiting = bookings.filter((b) => b.date === day && b.status === "kutilmoqda" && inZone(Number(b.table.match(/\d+/)?.[0] ?? 0)))
     .filter((b) => match(`${b.name} ${b.table}`));
 
-  const act = (b: PartnerBooking, status: BookingStatus) => {
-    setBookings(setBookingStatus(b.id, status));
-    if (status === "keldi") setOrders(openFromBooking(b));
+  const act = async (b: PartnerBooking, status: BookingStatus) => {
+    try { setBookings(await setBookingStatus(b.id, status)); } catch (e) { return toast(errorText(e)); }
+    if (status === "keldi") setOrders(await openFromBooking(b).catch(() => readOrders()));
     toast(status === "keldi" ? `${b.name} — keldi, ${b.table.split(" (")[0]} ochildi` : `${b.name} — bron bekor qilindi`);
   };
 
@@ -141,7 +147,7 @@ export function Orders() {
         {tab === "kutilmoqda" && (
           <>
             <ul className="space-y-[16px]">
-              {waiting.map((b) => <li key={b.id}><BookingCard b={b} showDate={false} onArrive={() => act(b, "keldi")} onCancel={() => act(b, "bekor")} /></li>)}
+              {waiting.map((b) => <li key={b.id}><BookingCard b={b} showDate={false} onArrive={() => void act(b, "keldi")} onCancel={() => void act(b, "bekor")} /></li>)}
             </ul>
             <p className="mt-[34px] text-center text-[14px] text-[#94A3B8]">{waiting.length ? "Barcha buyurtmalar ko‘rsatildi" : "Kelishi kutilayotgan mijozlar yo‘q"}</p>
           </>
@@ -153,9 +159,10 @@ export function Orders() {
           onPick={(d) => set({ kalendar: null, sana: iso(d) === iso(now) ? null : iso(d) })} />
       )}
       {finish && (
-        <FinishDialog o={finish} onClose={() => setFinish(null)} onConfirm={() => {
-          setOrders(finishOrder(finish.id)); setFinish(null);
-          toast(`Stol ${finish.table} yopildi — chek chop etildi`);
+        <FinishDialog o={finish} onClose={() => setFinish(null)} onConfirm={async () => {
+          const o = finish; setFinish(null);
+          try { setOrders(await finishOrder(o.id)); } catch (e) { return toast(errorText(e)); }
+          toast(`Stol ${o.table} yopildi — chek chop etildi`);
         }} />
       )}
     </main>

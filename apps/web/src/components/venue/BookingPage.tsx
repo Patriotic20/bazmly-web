@@ -4,13 +4,15 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { CheckIcon, MinusIcon, PlusIcon } from "@bazmly/ui/icons";
 import { useToast } from "@bazmly/ui/Toast";
-import { isDayFree, isTableFree, isTimeFree, nextDays, readDraft, saveDraft, TIMES } from "@bazmly/api/booking";
+import { nextDays, readDraft, saveDraft, TIMES } from "@bazmly/api/booking";
+import { type FreeTable, freeTables } from "@bazmly/api/bookings";
 import type { VenueDetails } from "@bazmly/api/venues";
 import { Stepper } from "./Stepper";
 import { useCart } from "./useCart";
 import { VenueLayout } from "./VenueLayout";
 
-const TABLES = Array.from({ length: 20 }, (_, i) => i + 1);
+// Stollar backenddan: tanlangan sana va vaqtda (vaqt tanlanmagan bo'lsa — 12:00) bo'sh stollar ko'rsatiladi
+const PROBE_TIME = "12:00";
 
 const Title = ({ children }: { children: React.ReactNode }) => (
   <h2 className="h-[15px] text-[18px] font-semibold leading-[15px] text-[#1F1F1F] dark:text-[#FFFFFF] sm:text-[20px]">{children}</h2>
@@ -26,6 +28,7 @@ export function BookingPage({ v }: { v: VenueDetails }) {
   const [table, setTable] = useState<number | null>(null);
   const [date, setDate] = useState(days[0].iso);
   const [time, setTime] = useState<string | null>(null);
+  const [tables, setTables] = useState<FreeTable[]>([]);
 
   useEffect(() => {
     const d = readDraft(v.id);
@@ -34,6 +37,15 @@ export function BookingPage({ v }: { v: VenueDetails }) {
     if (d.date && days.some((x) => x.iso === d.date)) setDate(d.date);
     if (d.time) setTime(d.time);
   }, [v.id, days]);
+
+  useEffect(() => {
+    let alive = true;
+    freeTables(v.id, date, time ?? PROBE_TIME, people || undefined)
+      .then((list) => { if (alive) setTables(list); })
+      .catch(() => { if (alive) setTables([]); });
+    return () => { alive = false; };
+  }, [v.id, date, time, people]);
+  const TABLES = tables.map((t) => t.number);
 
   // tanlangan sana / vaqt ko'rinadigan joyga suriladi
   useEffect(() => {
@@ -50,9 +62,10 @@ export function BookingPage({ v }: { v: VenueDetails }) {
 
   const next = () => {
     if (people < 1) return toast("Necha kishi uchun ekanini belgilang");
-    if (!table) return toast("Joyni (stolni) belgilang");
+    const free = tables.find((t) => t.number === table);
+    if (!table || !free) return toast("Joyni (stolni) belgilang");
     if (!time) return toast("Vaqtni belgilang");
-    saveDraft(v.id, { people, table, date, time });
+    saveDraft(v.id, { people, table, tableId: free.id, date, time });
     router.push(`/${v.type === "toyxona" ? "toyxonalar" : "restoranlar"}/${v.id}/bron/tasdiqlash`);
   };
 
@@ -86,7 +99,7 @@ export function BookingPage({ v }: { v: VenueDetails }) {
             {TABLES.map((n) => {
               const on = table === n;
               // Dark (Figma): bo'sh joylar to'q sariq, band — oq
-              const free = isTableFree(v.id, n);
+              const free = true;
               return (
                 <button
                   key={n}
@@ -111,9 +124,9 @@ export function BookingPage({ v }: { v: VenueDetails }) {
         <section className="mt-[30px]">
           <Title>Sanani belgilash</Title>
           <div role="radiogroup" aria-label="Sana" className="no-scrollbar -mx-4 mt-[24px] flex gap-[12px] overflow-x-auto px-4 md:mx-0 md:px-0">
-            {days.map((d, i) => {
+            {days.map((d) => {
               const on = date === d.iso;
-              const free = isDayFree(v.id, d.iso, i);
+              const free = true;
               return (
                 <button
                   key={d.iso}
@@ -138,9 +151,9 @@ export function BookingPage({ v }: { v: VenueDetails }) {
         <section className="mt-[30px]">
           <Title>Vaqtni belgilash</Title>
           <div role="radiogroup" aria-label="Vaqt" className="no-scrollbar -mx-4 mt-[24px] flex gap-[12px] overflow-x-auto px-4 md:mx-0 md:px-0">
-            {TIMES.map((t, i) => {
+            {TIMES.map((t) => {
               const on = time === t;
-              const free = isTimeFree(v.id, date ?? days[0]?.iso ?? "", t, i);
+              const free = true;
               return (
                 <button
                   key={t}

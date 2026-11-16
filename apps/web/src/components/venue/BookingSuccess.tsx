@@ -7,15 +7,8 @@ import { useEffect, useState } from "react";
 import { BazmlyLogo } from "@bazmly/ui/BazmlyLogo";
 import { CallIcon, CardIcon, ChevronLeftIcon, LocationIcon, MapIcon, ScanIcon, ShareBoxIcon } from "@bazmly/ui/icons";
 import { QrCode } from "@/components/ui/QrCode";
-import { BOOKINGS_KEY } from "@bazmly/api/payment";
-import { getVenue, type VenueType } from "@bazmly/api/venues";
-
-type Booking = {
-  id: string; venueId: string; venueName: string; type: VenueType;
-  people?: number; table?: number; date?: string; time?: string;
-  method: "joyida" | "karta"; amount: number; createdAt: string;
-  receipt?: string; code?: string;
-};
+import { type Booking, bookingVenue, fetchBooking, STATUS_TEXT } from "@bazmly/api/bookings";
+import type { VenueDetails } from "@bazmly/api/venues";
 
 // Eski bronlarda (chek/kod yo'q) id'dan barqaror raqam hosil qilinadi
 function digitsFrom(seed: string, n: number) {
@@ -24,8 +17,9 @@ function digitsFrom(seed: string, n: number) {
   return out.slice(0, n);
 }
 
-const fmtReceipt = (r: string) => `${r.slice(0, 4)} ${r.slice(4, 7)} ${r.slice(7, 10)}`;
-const fmtCode = (c: string) => c.replace(/(\d{4})(?=\d)/g, "$1 ");
+// Backend chek raqami va chipta kodi harf-raqamli bo'lishi mumkin
+const fmtReceipt = (r: string) => (/^\d{10}$/.test(r) ? `${r.slice(0, 4)} ${r.slice(4, 7)} ${r.slice(7, 10)}` : r.replace(/(.{4})(?=.)/g, "$1 "));
+const fmtCode = (c: string) => c.replace(/(.{4})(?=.)/g, "$1 ");
 const fmtDate = (iso?: string) => (iso ? iso.split("-").reverse().join("/") : "—");
 const fmtPrice = (n: number) => `${n.toLocaleString("de-DE")} so‘m`; // Figma: 600.000 so‘m
 
@@ -36,12 +30,16 @@ export function BookingSuccess() {
   const id = params.get("id");
   const showQr = params.get("qr") === "1";
   const [b, setB] = useState<Booking | null | undefined>(undefined);
+  const [v, setV] = useState<VenueDetails | null>(null);
 
   useEffect(() => {
-    try {
-      const list: Booking[] = JSON.parse(localStorage.getItem(BOOKINGS_KEY) ?? "[]");
-      setB(list.find((x) => x.id === id) ?? null);
-    } catch { setB(null); }
+    let alive = true;
+    fetchBooking(id ?? "").then((x) => {
+      if (!alive) return;
+      setB(x);
+      if (x) bookingVenue(x).then((vv) => { if (alive) setV(vv); });
+    });
+    return () => { alive = false; };
   }, [id]);
 
   if (b === undefined) return null;
@@ -56,7 +54,6 @@ export function BookingSuccess() {
     );
   }
 
-  const v = getVenue(b.type, b.venueId);
   const receipt = b.receipt ?? digitsFrom(b.id, 10);
   const code = b.code ?? digitsFrom(b.id + "k", 16);
   const toggleQr = (on: boolean) => router.push(`/bron/tasdiqlandi?id=${b.id}${on ? "&qr=1" : ""}`, { scroll: false });
@@ -71,7 +68,7 @@ export function BookingSuccess() {
               <ChevronLeftIcon className="h-[22px] w-[11px]" />
             </button>
             <div className="mt-6 aspect-square w-full lg:mt-[94px] lg:size-[352px] dark:bg-white dark:p-[5px] dark:lg:size-[362px] dark:lg:mt-[89px]">
-              <QrCode value={`BAZMLY:${b.id}:${code}`} className="size-full" title={`Bron QR kodi: ${fmtCode(code)}`} />
+              <QrCode value={b.qr ?? `BAZMLY:${b.id}:${code}`} className="size-full" title={`Bron QR kodi: ${fmtCode(code)}`} />
             </div>
             <p className="mt-[38px] text-center text-[20px] leading-[29px] text-black dark:text-[#FFFFFF]">
               Ushbu QR kodni sotuvchiga
@@ -109,10 +106,10 @@ export function BookingSuccess() {
 }
 
 function Ticket({ b, v, receipt, code, qrLabel, onQr }: {
-  b: Booking; v: ReturnType<typeof getVenue>; receipt: string; code: string; qrLabel: string; onQr: () => void;
+  b: Booking; v: VenueDetails | null; receipt: string; code: string; qrLabel: string; onQr: () => void;
 }) {
   const rows: [string, string][] = [
-    ["Holat", "Band qilish tasdiqlandi"],
+    ["Holat", b.status ? STATUS_TEXT[b.status] : "Band qilish tasdiqlandi"],
     ["Chek raqami:", fmtReceipt(receipt)],
     ["Belgilandi:", `${b.time ?? "—"} • ${fmtDate(b.date)}`],
     b.type === "toyxona" ? ["Mehmonlar:", b.people ? `${b.people} kishi` : "—"] : ["Stol raqami:", b.table ? `${b.table} - stol` : "—"],
@@ -153,10 +150,10 @@ function Ticket({ b, v, receipt, code, qrLabel, onQr }: {
           ))}
         </dl>
 
-        {b.amount > 0 && (
+        {(b.amount ?? 0) > 0 && (
           <div className="absolute inset-x-[19px] top-[331px] flex h-[41px] items-center justify-between rounded-full border border-brand bg-[#FFF6F1] px-[11px] text-brand">
             <span className="text-[16px]">Narx:</span>
-            <span className="flex items-center gap-[10px] text-[18px] font-semibold"><CardIcon className="size-[24px]" />{fmtPrice(b.amount)}</span>
+            <span className="flex items-center gap-[10px] text-[18px] font-semibold"><CardIcon className="size-[24px]" />{fmtPrice(b.amount ?? 0)}</span>
           </div>
         )}
 

@@ -4,7 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { longDate } from "@bazmly/api/partnerBookings";
-import { formatPhone, readStaff, removeStaff, roleLabel, saveStaff, type Role, type Staff as StaffT } from "@bazmly/api/staff";
+import { errorText } from "@bazmly/api/client";
+import { formatPhone, readStaff, removeStaff, roleLabel, setStaffActive, syncStaff, type Role, type Staff as StaffT } from "@bazmly/api/staff";
 import { PlusIcon } from "@bazmly/ui/icons";
 import { useToast } from "@bazmly/ui/Toast";
 import { PageHead } from "@/components/PageHead";
@@ -40,7 +41,10 @@ export function Staff() {
   const [list, setList] = useState<StaffT[] | null>(null);
   const [today, setToday] = useState<Date | null>(null);
   const [confirm, setConfirm] = useState<StaffT | null>(null);
-  useEffect(() => { setList(readStaff()); setToday(new Date()); }, []);
+  useEffect(() => {
+    setList(readStaff()); setToday(new Date());
+    syncStaff().then(setList).catch(() => {});
+  }, []);
 
   const filter = (params.get("lavozim") as Filter) || "hammasi";
   const q = (params.get("q") ?? "").trim().toLowerCase();
@@ -56,9 +60,14 @@ export function Staff() {
     .filter((s) => filter === "hammasi" ? true : filter === "noaktiv" ? !s.active : s.role === filter)
     .filter((s) => !q || s.name.toLowerCase().includes(q) || s.phone.includes(q.replace(/\D/g, "") || "\u0000") || roleLabel(s.role).toLowerCase().includes(q));
 
-  const toggle = (s: StaffT) => {
-    setList(saveStaff({ ...s, active: !s.active }));
+  const toggle = async (s: StaffT) => {
+    try { setList(await setStaffActive(s.id, !s.active)); } catch (e) { return toast(errorText(e)); }
     toast(s.active ? `${s.name} — noaktiv qilindi` : `${s.name} — aktiv qilindi`);
+  };
+  const remove = async (s: StaffT) => {
+    setConfirm(null);
+    try { setList(await removeStaff(s.id)); } catch (e) { return toast(errorText(e)); }
+    toast(`${s.name} o‘chirildi`);
   };
 
   return (
@@ -102,7 +111,7 @@ export function Staff() {
                 <a href={`tel:${s.phone}`} className="ml-[4px] tabular-nums hover:text-[#FF6A00]">{formatPhone(s.phone)}</a>
               </p>
             </div>
-            <RowMenu s={s} onEdit={() => router.push(`/panel/hodimlar/yangi?id=${s.id}`)} onToggle={() => toggle(s)} onRemove={() => setConfirm(s)} />
+            <RowMenu s={s} onEdit={() => router.push(`/panel/hodimlar/yangi?id=${s.id}`)} onToggle={() => void toggle(s)} onRemove={() => setConfirm(s)} />
           </li>
         ))}
       </ul>
@@ -117,7 +126,7 @@ export function Staff() {
             <p className="mt-2 text-[15px] text-[#6B7280]">{confirm.name} tizimdan o‘chiriladi va boshqa kira olmaydi.</p>
             <div className="mt-6 grid grid-cols-2 gap-3">
               <button type="button" autoFocus onClick={() => setConfirm(null)} className="h-12 rounded-[12px] border border-[#E5E7EB] text-[16px] text-[#374151] hover:bg-[#F9FAFB]">Bekor qilish</button>
-              <button type="button" onClick={() => { setList(removeStaff(confirm.id)); toast(`${confirm.name} o‘chirildi`); setConfirm(null); }} className="h-12 rounded-[12px] bg-[#D92D20] text-[16px] text-white hover:bg-[#B42318]">O‘chirish</button>
+              <button type="button" onClick={() => void remove(confirm)} className="h-12 rounded-[12px] bg-[#D92D20] text-[16px] text-white hover:bg-[#B42318]">O‘chirish</button>
             </div>
           </div>
         </div>

@@ -5,7 +5,8 @@ import { Fit } from "@bazmly/ui/Fit";
 import { useEffect, useRef, useState } from "react";
 import { CheckIcon } from "@bazmly/ui/icons";
 import { useToast } from "@bazmly/ui/Toast";
-import { HALL_STEPS, isDayFree, isTimeFree, nextDays, readDraft, saveDraft, TIMES } from "@bazmly/api/booking";
+import { HALL_STEPS, nextDays, readDraft, saveDraft, TIMES } from "@bazmly/api/booking";
+import { blockedDates } from "@bazmly/api/bookings";
 import type { VenueDetails } from "@bazmly/api/venues";
 import { Stepper } from "./Stepper";
 
@@ -51,15 +52,23 @@ export function HallDateStep({ v }: { v: VenueDetails }) {
   const days = useRef(nextDays(30)).current;
   const [date, setDate] = useState<string | null>(null);
   const [time, setTime] = useState<string | null>(null);
+  // Band kunlar — backend `/v1/venues/{id}/availability`. Soat bo'yicha bandlik API'da yo'q — barcha vaqtlar bo'sh.
+  const [blocked, setBlocked] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
-    const d = readDraft(v.id);
-    const di = days.findIndex((x) => x.iso === d.date);
-    if (di >= 0 && isDayFree(v.id, days[di].iso, di)) {
-      setDate(days[di].iso);
-      const ti = TIMES.indexOf(d.time ?? "");
-      if (ti >= 0 && isTimeFree(v.id, days[di].iso, TIMES[ti], ti)) setTime(TIMES[ti]);
-    }
+    let alive = true;
+    blockedDates(v.id, days[0].iso, days[days.length - 1].iso).then((b) => {
+      if (!alive) return;
+      setBlocked(b);
+      const d = readDraft(v.id);
+      const di = days.findIndex((x) => x.iso === d.date);
+      if (di >= 0 && !b.has(days[di].iso)) {
+        setDate(days[di].iso);
+        const ti = TIMES.indexOf(d.time ?? "");
+        if (ti >= 0) setTime(TIMES[ti]);
+      }
+    }).catch(() => {});
+    return () => { alive = false; };
   }, [v.id, days]);
 
   useEffect(() => {
@@ -70,7 +79,7 @@ export function HallDateStep({ v }: { v: VenueDetails }) {
     setDate(iso);
     // boshqa kunda tanlangan vaqt band bo'lishi mumkin
     const ti = time ? TIMES.indexOf(time) : -1;
-    const keep = ti >= 0 && isTimeFree(v.id, iso, TIMES[ti], ti);
+    const keep = ti >= 0;
     if (!keep) setTime(null);
     saveDraft(v.id, { date: iso, time: keep ? time ?? undefined : undefined });
   };
@@ -88,8 +97,8 @@ export function HallDateStep({ v }: { v: VenueDetails }) {
       <section aria-labelledby="h-date">
         <Title id="h-date">Sanani belgilash</Title>
         <div role="radiogroup" aria-labelledby="h-date" className="no-scrollbar -mx-4 mt-[24px] flex gap-[12px] overflow-x-auto px-4 md:mx-0 md:px-0">
-          {days.map((d, i) => {
-            const free = isDayFree(v.id, d.iso, i);
+          {days.map((d) => {
+            const free = !blocked.has(d.iso);
             const on = date === d.iso;
             return (
               <button
@@ -117,8 +126,8 @@ export function HallDateStep({ v }: { v: VenueDetails }) {
       <section aria-labelledby="h-time" className="mt-[30px]">
         <Title id="h-time">Vaqtni belgilash</Title>
         <div role="radiogroup" aria-labelledby="h-time" className="no-scrollbar -mx-4 mt-[24px] flex gap-[12px] overflow-x-auto px-4 md:mx-0 md:px-0">
-          {TIMES.map((t, i) => {
-            const free = !!date ? isTimeFree(v.id, date, t, i) : isTimeFree(v.id, days[0].iso, t, i);
+          {TIMES.map((t) => {
+            const free = true;
             const on = time === t;
             return (
               <button

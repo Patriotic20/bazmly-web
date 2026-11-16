@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { readAccount, totalSeats, totalTables, updateAccount, type Tables } from "@bazmly/api/partner";
+import { readAccount, saveAccount, totalSeats, totalTables, type Tables } from "@bazmly/api/partner";
 import { useToast } from "@bazmly/ui/Toast";
 import { pillBtn, SettingsCard } from "@/components/SettingsCard";
 import { TableCounts } from "@/components/TableCounts";
@@ -15,9 +15,9 @@ export default function TablesSettings() {
   useEffect(() => setT(readAccount()?.tables ?? {}), []);
   const back = () => router.push("/panel/sozlamalar/profil");
 
-  const save = () => {
+  const save = async () => {
     if (!t || !totalTables(t)) return toast("Kamida bitta stol sonini kiriting");
-    if (!updateAccount({ tables: t, seats: totalSeats(t) })) return toast("Saqlab bo‘lmadi");
+    if (!(await saveAccount({ tables: t, seats: totalSeats(t) }))) return toast("Saqlab bo‘lmadi");
     toast(`Saqlandi: ${totalTables(t)} ta stol, ${totalSeats(t)} ta joy`);
     back();
   };

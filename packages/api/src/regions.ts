@@ -1,4 +1,8 @@
-// O'zbekiston viloyatlari va tumanlari (namunaviy ro'yxat — keyinchalik backend'dan keladi)
+// O'zbekiston viloyatlari. Ro'yxat nomlari shu yerda (dizayndagi qisqa nomlar uchun), tumanlar esa backend
+// `/v1/regions/{id}/districts` dan olinadi (koordinatalari bilan — yaqin joylarni topish uchun).
+// Quyidagi `districts` — backend javob bermasa ishlatiladigan zaxira ro'yxat.
+import { api } from "./client";
+
 export type Region = { id: string; name: string; short: string; districts: string[] };
 
 export const REGIONS: Region[] = [
@@ -18,7 +22,24 @@ export const REGIONS: Region[] = [
   { id: "qoraqalpogiston", name: "Qoraqalpog‘iston Respublikasi", short: "Nukus", districts: ["Nukus shahri", "Xo‘jayli tumani", "Beruniy tumani", "To‘rtko‘l tumani", "Chimboy tumani"] },
 ];
 
-export type UserLocation = { region: string; district?: string };
+export type UserLocation = { region: string; district?: string; districtId?: number; lat?: number; lng?: number };
+
+/** Frontend viloyat id → backend viloyat id (`/v1/regions`) */
+export const BACKEND_REGION: Record<string, number> = {
+  "toshkent-sh": 1, andijon: 2, buxoro: 3, jizzax: 4, qashqadaryo: 5, navoiy: 6, namangan: 7, samarqand: 8,
+  sirdaryo: 9, surxondaryo: 10, "toshkent-v": 11, fargona: 12, xorazm: 13, qoraqalpogiston: 14,
+};
+export type District = { id: number; name: string; lat: number; lng: number };
+
+/** Viloyat tumanlari — backenddan (xatolikda zaxira ro'yxatdan, koordinatasiz) */
+export async function fetchDistricts(regionId: string): Promise<District[]> {
+  const bid = BACKEND_REGION[regionId];
+  try {
+    const list = await api<{ id: number; name: string; latitude: string; longitude: string }[]>(`/v1/regions/${bid}/districts`, { auth: false });
+    if (list.length) return list.map((d) => ({ id: d.id, name: d.name, lat: Number(d.latitude), lng: Number(d.longitude) }));
+  } catch {}
+  return regionById(regionId).districts.map((name, i) => ({ id: -(i + 1), name, lat: NaN, lng: NaN }));
+}
 export const LOCATION_KEY = "bazmly:location";
 export const DEFAULT_LOCATION: UserLocation = { region: "toshkent-sh" };
 

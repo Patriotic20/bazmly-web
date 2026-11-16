@@ -3,8 +3,9 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { BOOKINGS_KEY } from "@bazmly/api/payment";
-import { getVenue } from "@bazmly/api/venues";
+import { bookingVenue, fetchBookings, isActive } from "@bazmly/api/bookings";
+import { isAuthed } from "@bazmly/api/client";
+import type { VenueDetails } from "@bazmly/api/venues";
 import { LocationIcon, MapIcon, UserIcon } from "@bazmly/ui/icons";
 import { at, type Booking } from "../bookings/BookingsView";
 
@@ -30,18 +31,25 @@ const dayText = (iso: string) => {
 export function useNextBooking() {
   const [b, setB] = useState<Booking | null>(null);
   useEffect(() => {
-    try {
-      const list: Booking[] = JSON.parse(localStorage.getItem(BOOKINGS_KEY) ?? "[]");
+    if (!isAuthed()) return;
+    let alive = true;
+    fetchBookings().then((list) => {
       const now = Date.now();
-      setB(list.filter((x) => at(x) >= now).sort((x, y) => at(x) - at(y))[0] ?? null);
-    } catch {}
+      if (alive) setB(list.filter((x) => at(x) >= now && isActive(x)).sort((x, y) => at(x) - at(y))[0] ?? null);
+    }).catch(() => {});
+    return () => { alive = false; };
   }, []);
   return b;
 }
 
 // Figma: "Bandlangan" — bosh sahifada eng yaqin bron kartasi (353×168, to'q sariq)
 export function BookedCard({ b }: { b: Booking }) {
-  const v = getVenue(b.type, b.venueId);
+  const [v, setV] = useState<VenueDetails | null>(null);
+  useEffect(() => {
+    let alive = true;
+    bookingVenue(b).then((x) => { if (alive) setV(x); });
+    return () => { alive = false; };
+  }, [b]);
   if (!v) return null;
   const people = b.people ?? b.guestTier;
   return (

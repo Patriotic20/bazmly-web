@@ -4,18 +4,26 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { CallIcon, ClockIcon, LocationIcon, MapIcon } from "@bazmly/ui/icons";
-import { BOOKINGS_KEY } from "@bazmly/api/payment";
-import { getVenue, type VenueType } from "@bazmly/api/venues";
+import { type Booking, bookingThumb, bookingVenue, fetchBookings, isActive, STATUS_TEXT } from "@bazmly/api/bookings";
+import type { VenueDetails } from "@bazmly/api/venues";
 import { LocationPicker } from "./LocationPicker";
 
-export type Booking = {
-  id: string; venueId: string; venueName?: string; type: VenueType;
-  date?: string; time?: string; table?: number; people?: number; guestTier?: string; receipt?: string;
-};
+export type { Booking };
+
+/** Bron kartasi uchun muassasa ma'lumotlari (backenddan) */
+export function useBookingVenue(b: Booking) {
+  const [v, setV] = useState<VenueDetails | null>(null);
+  useEffect(() => {
+    let alive = true;
+    bookingVenue(b).then((x) => { if (alive) setV(x); });
+    return () => { alive = false; };
+  }, [b]);
+  return v;
+}
 
 const pad = (n: number) => String(n).padStart(2, "0");
 export const at = (b: Booking) => (b.date ? new Date(`${b.date}T${b.time ?? "00:00"}:00`).getTime() : NaN);
-const fmtReceipt = (r?: string) => (r ? r.replace(/^(\d{4})(\d{3})(\d{3})$/, "$1 $2 $3") : "—");
+const fmtReceipt = (r?: string) => (r ? (/^\d{10}$/.test(r) ? r.replace(/^(\d{4})(\d{3})(\d{3})$/, "$1 $2 $3") : r.replace(/(.{4})(?=.)/g, "$1 ")) : "—");
 const fmtDate = (iso?: string) => (iso ? iso.split("-").reverse().join("/") : "—");
 
 /** "2 soat 25 daqiqa", "3 kun 4 soat", "12 daqiqa" */
@@ -33,15 +41,15 @@ export function BookingsView() {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    try { setList(JSON.parse(localStorage.getItem(BOOKINGS_KEY) ?? "[]")); } catch { setList([]); }
+    fetchBookings().then(setList).catch(() => setList([]));
     const t = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(t);
   }, []);
 
   const sorted = useMemo(() => {
     if (!list) return [];
-    const up = list.filter((b) => at(b) > now).sort((a, b) => at(a) - at(b));
-    const past = list.filter((b) => !(at(b) > now)).sort((a, b) => (at(b) || 0) - (at(a) || 0));
+    const up = list.filter((b) => at(b) > now && isActive(b)).sort((a, b) => at(a) - at(b));
+    const past = list.filter((b) => !(at(b) > now && isActive(b))).sort((a, b) => (at(b) || 0) - (at(a) || 0));
     return [...up, ...past];
   }, [list, now]);
 
@@ -68,15 +76,15 @@ export function BookingsView() {
 }
 
 export function BookingCard({ b, now }: { b: Booking; now: number }) {
-  const v = getVenue(b.type, b.venueId);
+  const v = useBookingVenue(b);
   const left = at(b) - now;
-  const upcoming = left > 0;
+  const upcoming = left > 0 && isActive(b);
   const hall = b.type === "toyxona";
-  const thumb = hall ? "/venue/hall-card.webp" : b.venueId.startsWith("rest-one") ? "/venue/rest-one-thumb.webp" : v?.gallery[0];
+  const thumb = bookingThumb(b, v);
   // Bosilganda darhol "Ushbu QR kodni sotuvchiga ko‘rsating" ekrani ochiladi
   const href = `/bron/tasdiqlandi?id=${b.id}&qr=1&from=list`;
   const rows: [string, string][] = [
-    ["Holat", upcoming ? "Band qilish tasdiqlandi" : "Yakunlangan"],
+    ["Holat", b.status ? STATUS_TEXT[b.status] : upcoming ? "Band qilish tasdiqlandi" : "Yakunlangan"],
     ["Chek raqami:", fmtReceipt(b.receipt)],
     ["Belgilandi:", `${b.time ?? "—"} • ${fmtDate(b.date)}`],
     hall ? ["Mehmonlar soni:", b.guestTier ?? (b.people ? `${b.people} kishi` : "—")] : ["Stol raqami:", b.table ? `${b.table} - stol` : "—"],

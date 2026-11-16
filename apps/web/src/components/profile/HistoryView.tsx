@@ -5,14 +5,14 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { at, BookingCard, type Booking } from "@/components/bookings/BookingsView";
 import { ChevronLeftIcon } from "@bazmly/ui/icons";
-import { BOOKINGS_KEY } from "@bazmly/api/payment";
+import { fetchBookings } from "@bazmly/api/bookings";
 
 // Figma: Tarix → "O'tirildi" — vaqti o'tgan (tashrif buyurilgan) bronlar, eng yangisi birinchi
 export function HistoryView() {
   const router = useRouter();
   const [list, setList] = useState<Booking[] | null>(null);
   const [now] = useState(() => Date.now());
-  useEffect(() => { try { setList(JSON.parse(localStorage.getItem(BOOKINGS_KEY) ?? "[]")); } catch { setList([]); } }, []);
+  useEffect(() => { fetchBookings().then(setList).catch(() => setList([])); }, []);
   const past = useMemo(() => (list ?? []).filter((b) => !(at(b) > now)).sort((a, b) => (at(b) || 0) - (at(a) || 0)), [list, now]);
 
   return (

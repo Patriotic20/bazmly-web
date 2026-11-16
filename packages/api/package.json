@@ -5,6 +5,9 @@
   "description": "Bazmly ma'lumot qatlami: turlar va backend bilan ishlash (hozircha brauzer xotirasi)",
   "exports": {
     "./client": "./src/client.ts",
+    "./auth": "./src/auth.ts",
+    "./bookings": "./src/bookings.ts",
+    "./notifications": "./src/notifications.ts",
     "./booking": "./src/booking.ts",
     "./payment": "./src/payment.ts",
     "./regions": "./src/regions.ts",
@@ -17,7 +20,8 @@
     "./orders": "./src/orders.ts",
     "./menu": "./src/menu.ts",
     "./lang": "./src/lang.ts",
-    "./hall": "./src/hall.ts"
+    "./hall": "./src/hall.ts",
+    "./venueAdmin": "./src/venueAdmin.ts"
   },
   "peerDependencies": {
     "react": "^19"

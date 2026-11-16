@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { basePrice, CATEGORIES, finalPrice, readMenu, som, type Dish } from "@bazmly/api/menu";
-import { addItem, readOrders, type Order } from "@bazmly/api/orders";
+import { basePrice, CATEGORIES, finalPrice, readMenu, som, syncMenu, type Dish } from "@bazmly/api/menu";
+import { errorText } from "@bazmly/api/client";
+import { addItem, readOrders, syncOrders, type Order } from "@bazmly/api/orders";
 import { iso } from "@bazmly/api/partnerBookings";
 import { PlusIcon, SearchIcon } from "@bazmly/ui/icons";
 import { useToast } from "@bazmly/ui/Toast";
@@ -21,7 +22,11 @@ export function MenuPage() {
   const [local, setLocal] = useState("");
   const [pick, setPick] = useState<Dish | null>(null);
   const [added, setAdded] = useState(0);
-  useEffect(() => { setMenu(readMenu()); setOrders(readOrders()); }, []);
+  useEffect(() => {
+    setMenu(readMenu()); setOrders(readOrders());
+    syncMenu().then(setMenu).catch(() => {});
+    syncOrders().then(setOrders).catch(() => {});
+  }, []);
 
   const cat = params.get("kategoriya");
   const orderId = params.get("buyurtma");
@@ -38,8 +43,8 @@ export function MenuPage() {
   const shown = menu.filter((d) => (!cat || d.category === cat) && (!q || d.name.toLowerCase().includes(q)));
   const openOrders = orders.filter((o) => o.date === iso(new Date()) && o.status !== "yakunlandi");
 
-  const addTo = (o: Order, d: Dish) => {
-    setOrders(addItem(o.id, d));
+  const addTo = async (o: Order, d: Dish) => {
+    try { setOrders(await addItem(o.id, d)); } catch (e) { return toast(errorText(e)); }
     setAdded((n) => n + 1);
     toast(`${d.name} — Stol ${o.table} buyurtmasiga qo‘shildi`);
   };
@@ -120,7 +125,7 @@ export function MenuPage() {
           <ul className="space-y-2">
             {openOrders.map((o) => (
               <li key={o.id}>
-                <button type="button" onClick={() => { addTo(o, pick); setPick(null); }} className="flex w-full items-center justify-between rounded-[12px] border border-[#E2E8F0] px-4 py-3 text-left font-inter hover:border-[#FF6A00]">
+                <button type="button" onClick={() => { void addTo(o, pick); setPick(null); }} className="flex w-full items-center justify-between rounded-[12px] border border-[#E2E8F0] px-4 py-3 text-left font-inter hover:border-[#FF6A00]">
                   <span><b className="text-[#0F172A]">Stol {o.table}</b> <span className="text-[14px] text-[#64748B]">· {o.customer}</span></span>
                   <PlusIcon className="size-[16px] text-[#FF6A00]" />
                 </button>

@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { readAccount, type PartnerAccount } from "@bazmly/api/partner";
-import { growth, iso, monthCount, MONTHS_UZ, readBookings, twoWeeks, type PartnerBooking } from "@bazmly/api/partnerBookings";
+import { growth, iso, monthCount, MONTHS_UZ, nextDays, readBookings, syncBookings, syncStats, twoWeeks, type PartnerBooking } from "@bazmly/api/partnerBookings";
 import { Fit } from "@bazmly/ui/Fit";
 import { ChevronRightIcon, ClockIcon } from "@bazmly/ui/icons";
-import { readBranches, readStaff } from "@bazmly/api/staff";
+import { readBranches, readStaff, syncBranches, syncStaff } from "@bazmly/api/staff";
 import { StoreIcon, TrendIcon, UsersOutlineIcon } from "@/components/panelIcons";
 import { HallHome } from "@/components/hall/HallHome";
 
@@ -35,6 +35,12 @@ export default function Dashboard() {
     setAcc(readAccount()); setList(readBookings()); setNow(new Date());
     // Restoranlar: asosiy joy + filiallar
     setCounts({ branches: 1 + readBranches().length, staff: readStaff().length });
+    // Backend: bugungi navbat, grafik va oylik statistika, filiallar va hodimlar soni
+    if (readAccount()?.kind !== "toyxona") {
+      syncBookings(nextDays(1)).then(setList).catch(() => {});
+      syncStats().then(() => setNow(new Date())).catch(() => {});
+      Promise.all([syncBranches(), syncStaff()]).then(([b, s]) => setCounts({ branches: 1 + b.length, staff: s.length })).catch(() => {});
+    }
     const t = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(t);
   }, []);

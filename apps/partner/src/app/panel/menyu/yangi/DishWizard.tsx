@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { readAccount } from "@bazmly/api/partner";
+import { errorText } from "@bazmly/api/client";
 import { basePrice, CATEGORIES, finalPrice, readMenu, removeDish, saveDish, som, type Dish, type Variant } from "@bazmly/api/menu";
 import { readBranches, type Branch } from "@bazmly/api/staff";
 import { useToast } from "@bazmly/ui/Toast";
@@ -49,6 +50,7 @@ export function DishWizard() {
   const [d, setD] = useState<Draft | null>(null);
   const [places, setPlaces] = useState<{ id: string; name: string; sub: string }[]>([]);
   const [saved, setSaved] = useState<Dish | null>(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     const acc = readAccount();
@@ -84,16 +86,20 @@ export function DishWizard() {
   if (!d) return null;
 
   const valid = [ok1, ok2, ok3, () => true][step - 1](d);
-  const next = () => {
-    if (!valid) return;
+  const next = async () => {
+    if (!valid || busy) return;
     if (step < 4) return go(step + 1);
     const variants = d.hasVariants ? toVariants(d) : [];
-    // TODO: backend — POST/PATCH /partner/menu
-    const list = saveDish({
+    setBusy(true);
+    let list: Dish[];
+    try {
+      list = await saveDish({
       id: d.id, name: d.name.trim(), description: d.description.trim() || undefined, image: d.image, active: d.active,
       variants: variants.length ? variants : undefined, price: variants.length ? Math.min(...variants.map((v) => v.price)) : Number(d.price),
       discount: Number(d.discount) || undefined, category: d.category, branches: d.branches,
-    });
+      });
+    } catch (err) { setBusy(false); return toast(errorText(err)); }
+    setBusy(false);
     try { sessionStorage.removeItem(KEY); } catch {}
     const id = d.id ?? list[0].id;
     router.replace(`/panel/menyu/yangi?tayyor=${id}${d.id ? "&tahrir=1" : ""}`);
@@ -105,13 +111,14 @@ export function DishWizard() {
       action={<button type="submit" form="dish-form" disabled={!valid} className={primaryBtn}>{btnText}</button>}>
       <div className="pt-2 sm:pt-[101px] sm:fit-tight:pt-[12px]">
         <Stepper step={step} />
-        <form id="dish-form" noValidate onSubmit={(e) => { e.preventDefault(); next(); }} className={`mx-auto mt-8 w-full max-w-[720px] sm:px-0 ${step === 1 ? "sm:mt-[56px]" : "sm:mt-[55px] sm:h-[481px] sm:overflow-y-auto sm:pb-4"}`}>
+        <form id="dish-form" noValidate onSubmit={(e) => { e.preventDefault(); void next(); }} className={`mx-auto mt-8 w-full max-w-[720px] sm:px-0 ${step === 1 ? "sm:mt-[56px]" : "sm:mt-[55px] sm:h-[481px] sm:overflow-y-auto sm:pb-4"}`}>
           {step === 1 && <Step1 d={d} patch={patch} />}
           {step === 2 && <Step2 d={d} patch={patch} />}
           {step === 3 && <Step3 d={d} patch={patch} places={places} />}
-          {step === 4 && <Step4 d={d} places={places} go={go} onRemove={() => {
+          {step === 4 && <Step4 d={d} places={places} go={go} onRemove={async () => {
             if (!d.id) return;
-            removeDish(d.id); try { sessionStorage.removeItem(KEY); } catch {}
+            try { await removeDish(d.id); } catch (err) { return toast(errorText(err)); }
+            try { sessionStorage.removeItem(KEY); } catch {}
             toast(`${d.name} menyudan o‘chirildi`); router.replace("/panel/menyu");
           }} />}
           <button type="submit" hidden />

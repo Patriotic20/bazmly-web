@@ -9,8 +9,10 @@ import { focusFirstEmpty, OtpBoxes } from "@/components/auth/OtpBoxes";
 import { CallIcon, CardIcon, ChevronRightIcon, DiscountOutlineIcon, PlusCircleIcon, PlusIcon, UserIcon } from "@bazmly/ui/icons";
 import { useToast } from "@bazmly/ui/Toast";
 import { HALL_STEPS, readDraft, saveDraft, WEEKDAYS } from "@bazmly/api/booking";
+import { createTableBooking } from "@bazmly/api/bookings";
+import { errorText } from "@bazmly/api/client";
 import {
-  BOOKINGS_KEY, DEPOSIT_PER_PERSON, expValid, formatCardNumber, formatExp, formatUzs,
+  DEPOSIT_PER_PERSON, expValid, formatCardNumber, formatExp, formatUzs,
   cardBrand, readCard, saveCard, type SavedCard,
 } from "@bazmly/api/payment";
 import type { VenueDetails } from "@bazmly/api/venues";
@@ -58,25 +60,34 @@ export function BookingConfirm({ v }: { v: VenueDetails }) {
   const formValid = name.trim().length >= 2 && phone.length === 9;
   const steps = v.type === "toyxona" ? HALL_STEPS : ["Restoranni belgilang", "Menu", "Kun va vaqtni belgilang", "Ma‘lumotlarni tasdiqlash"];
 
-  const finish = (method: "joyida" | "karta", amount: number, voucher?: string) => {
-    if (voucher) markVoucherUsed(voucher);
-    const booking = {
-      id: `B${Date.now().toString().slice(-6)}`,
-      venueId: v.id, venueName: v.name, type: v.type,
-      ...readDraft(v.id), name: name.trim(), phone: `+998${phone}`,
-      items: cart.lines.map((l) => ({ id: l.item.id, name: l.item.name, qty: l.qty, price: l.item.price })),
-      method, amount, createdAt: new Date().toISOString(),
-      receipt: randomDigits(10), code: randomDigits(16),
-    };
+  const [busy, setBusy] = useState(false);
+  // Bron backendda yaratiladi (POST /v1/bookings/table). Karta orqali to'lov uchun API yo'q — to'lov bosqichi namunaviy.
+  const finish = async (method: "joyida" | "karta", amount: number, voucher?: string) => {
+    void method; void amount;
+    if (busy) return;
+    const d = readDraft(v.id);
+    if (!d.date || !d.time || !d.tableId) {
+      toast("Kun, vaqt va stolni qayta belgilang");
+      return router.push(`/restoranlar/${v.id}/bron`);
+    }
+    setBusy(true);
     try {
-      const list = JSON.parse(localStorage.getItem(BOOKINGS_KEY) ?? "[]");
-      localStorage.setItem(BOOKINGS_KEY, JSON.stringify([booking, ...list]));
-      sessionStorage.setItem("bazmly:last-booking", JSON.stringify(booking));
-      sessionStorage.removeItem(`bazmly:booking:${v.id}`);
-      sessionStorage.removeItem(`bazmly:cart:${v.id}`);
-    } catch {}
-    // TODO: backend — POST /bookings
-    router.push(`/bron/tasdiqlandi?id=${booking.id}`);
+      const booking = await createTableBooking({
+        venueId: v.id, date: d.date, time: d.time, people: d.people ?? 1, tableId: d.tableId,
+        name: name.trim(), phone: `+998${phone}`,
+        items: cart.lines.map((l) => ({ id: l.item.id, qty: l.qty })),
+      });
+      if (voucher) markVoucherUsed(voucher);
+      try {
+        sessionStorage.removeItem(`bazmly:booking:${v.id}`);
+        sessionStorage.removeItem(`bazmly:cart:${v.id}`);
+      } catch {}
+      router.push(`/bron/tasdiqlandi?id=${booking.id}`);
+    } catch (e) {
+      toast(errorText(e, "Bron qilib bo‘lmadi, qayta urinib ko‘ring"));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (

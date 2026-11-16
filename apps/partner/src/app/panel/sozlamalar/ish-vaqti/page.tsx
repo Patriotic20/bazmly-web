@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { readAccount, updateAccount, type Hours } from "@bazmly/api/partner";
+import { readAccount, saveAccount, type Hours } from "@bazmly/api/partner";
 import { useToast } from "@bazmly/ui/Toast";
 import { pillBtn, SettingsCard } from "@/components/SettingsCard";
 import { TimeField } from "@/components/TimeField";
@@ -15,10 +15,10 @@ export default function HoursSettings() {
   useEffect(() => setH(readAccount()?.hours ?? {}), []);
   const back = () => router.push("/panel/sozlamalar/profil");
 
-  const save = () => {
+  const save = async () => {
     if (!h?.from || !h.to) return toast("Ish boshlash va tugash vaqtini tanlang");
     if (h.from === h.to) return toast("Boshlash va tugash vaqti bir xil bo‘lmasin");
-    if (!updateAccount({ hours: { from: h.from, to: h.to } })) return toast("Saqlab bo‘lmadi");
+    if (!(await saveAccount({ hours: { from: h.from, to: h.to } }))) return toast("Saqlab bo‘lmadi");
     toast("Ish vaqti saqlandi");
     back();
   };

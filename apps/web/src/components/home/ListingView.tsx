@@ -1,11 +1,12 @@
 "use client";
 
 import { HALL_STEPS } from "@bazmly/api/booking";
-import { allHalls, allVenues, topHalls, topRestaurants, type VenueType } from "@bazmly/api/venues";
+import type { GridVenue, Venue, VenueType } from "@bazmly/api/venues";
 import { Stepper } from "../venue/Stepper";
 import { GridCard } from "./GridCard";
 import { ScrollRow } from "./ScrollRow";
 import { Section } from "./Section";
+import { useVenues } from "./useVenues";
 import { VenueCard } from "./VenueCard";
 
 const REST_STEPS = ["Restoranni belgilang", "Menu", "Kun va vaqtni belgilang", "Ma‘lumotlarni tasdiqlash"];
@@ -13,8 +14,8 @@ const REST_STEPS = ["Restoranni belgilang", "Menu", "Kun va vaqtni belgilang", "
 // Figma: "Restoranni belgilang" — bron qilishning 1-bosqichi: Top qatori va barcha joylar to'ri
 export function ListingView({ type }: { type: VenueType }) {
   const hall = type === "toyxona";
-  const top = hall ? topHalls : topRestaurants;
-  const grid = hall ? allHalls : allVenues;
+  const top = useVenues<Venue>(type, "top") ?? [];
+  const grid = useVenues<GridVenue>(type, "grid") ?? [];
   return (
     <div className="container-page pb-16 pt-5 md:pt-8 xl:pt-[40px]">
       <div className="lg:pt-[34px]">

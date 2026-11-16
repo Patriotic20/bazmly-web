@@ -3,9 +3,10 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  addDays, fromIso, iso, longDate, readBookings, setBookingStatus, type BookingStatus, type PartnerBooking,
+  addDays, fromIso, iso, longDate, nextDays, readBookings, setBookingStatus, syncBookings, type BookingStatus, type PartnerBooking,
 } from "@bazmly/api/partnerBookings";
-import { openFromBooking } from "@bazmly/api/orders";
+import { errorText } from "@bazmly/api/client";
+import { openFromBooking, syncTables } from "@bazmly/api/orders";
 import { ChevronLeftIcon } from "@bazmly/ui/icons";
 import { useToast } from "@bazmly/ui/Toast";
 import { Calendar } from "@/components/Calendar";
@@ -34,9 +35,15 @@ export function Waiting() {
   const [list, setList] = useState<PartnerBooking[] | null>(null);
   const [today, setToday] = useState<Date | null>(null);
 
-  useEffect(() => { setList(readBookings()); setToday(new Date()); }, []);
+  useEffect(() => {
+    setList(readBookings()); setToday(new Date());
+    syncBookings(nextDays()).then(setList).catch(() => {});
+    void syncTables().catch(() => {});
+  }, []);
 
   const sana = params.get("sana");
+  // Kalendardan tanlangan boshqa kun — shu kun bronlari backend'dan olinadi
+  useEffect(() => { if (sana) syncBookings([sana]).then(setList).catch(() => {}); }, [sana]);
   const day: Day | null = sana ? null : ((params.get("kun") as Day) || "bugun");
   const filter = (params.get("holat") as Filter) || "hammasi";
   const q = (params.get("q") ?? "").trim().toLowerCase();
@@ -63,10 +70,10 @@ export function Waiting() {
     .filter((b) => filter === "hammasi" || b.status === filter)
     .sort((a, b) => ORDER[a.status] - ORDER[b.status] || (a.date + a.time).localeCompare(b.date + b.time));
 
-  const act = (b: PartnerBooking, status: BookingStatus) => {
-    setList(setBookingStatus(b.id, status));
+  const act = async (b: PartnerBooking, status: BookingStatus) => {
+    try { setList(await setBookingStatus(b.id, status)); } catch (e) { return toast(errorText(e)); }
     // Mijoz keldi — uning stoliga buyurtma ochiladi ("Buyurtmalar" bo'limida ko'rinadi)
-    if (status === "keldi") openFromBooking(b);
+    if (status === "keldi") void openFromBooking(b).catch(() => {});
     toast(status === "keldi" ? `${b.name} — keldi deb belgilandi` : `${b.name} — bron bekor qilindi`);
   };
 
@@ -126,7 +133,7 @@ export function Waiting() {
       <ul className="space-y-[10px]">
         {shown.map((b) => (
           <li key={b.id}>
-            <Card b={b} showDate={!date} onArrive={() => act(b, "keldi")} onCancel={() => act(b, "bekor")} />
+            <Card b={b} showDate={!date} onArrive={() => void act(b, "keldi")} onCancel={() => void act(b, "bekor")} />
           </li>
         ))}
       </ul>

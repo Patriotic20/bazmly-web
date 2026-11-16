@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { addBranch, readStaff, type Staff } from "@bazmly/api/staff";
+import { errorText } from "@bazmly/api/client";
+import { addBranch, readStaff, syncStaff, type Staff } from "@bazmly/api/staff";
 import { ChevronDownIcon } from "@bazmly/ui/icons";
 import { useToast } from "@bazmly/ui/Toast";
 import { MapPicker, TASHKENT, type LatLng } from "@/components/MapPicker";
@@ -28,16 +29,20 @@ export default function NewBranch() {
   const [big, setBig] = useState(false);
 
   useEffect(() => {
-    const list = readStaff().filter((s) => s.active && (s.role === "menejer" || s.role === "admin")).sort((a, b) => a.name.localeCompare(b.name));
-    setManagers(list);
+    const pick = (all: Staff[]) => all.filter((s) => s.active && (s.role === "menejer" || s.role === "admin")).sort((a, b) => a.name.localeCompare(b.name));
+    setManagers(pick(readStaff()));
+    syncStaff().then((all) => setManagers(pick(all))).catch(() => {});
   }, []);
 
   const valid = name.trim().length >= 2 && address.trim().length >= 3 && digits.length === 9 && /^\d\d:\d\d$/.test(from) && /^\d\d:\d\d$/.test(to) && from !== to;
-  const submit = (e?: React.FormEvent) => {
+  const [busy, setBusy] = useState(false);
+  const submit = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!valid) return;
-    // TODO: backend — POST /partner/branches
-    addBranch({ name: name.trim(), address: address.trim(), lat: pos.lat, lng: pos.lng, from, to, phone: `+998${digits}`, managerId });
+    if (!valid || busy) return;
+    setBusy(true);
+    try { await addBranch({ name: name.trim(), address: address.trim(), lat: pos.lat, lng: pos.lng, from, to, phone: `+998${digits}`, managerId }); }
+    catch (err) { setBusy(false); return toast(errorText(err)); }
+    setBusy(false);
     toast(`“${name.trim()}” filiali qo‘shildi`);
     router.push("/panel/filiallar");
   };

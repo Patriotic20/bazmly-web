@@ -1,8 +1,12 @@
 "use client";
 
 import { accountKey } from "./partner";
-// Hamkor paneli: mijozlar bronlari va statistikasi — backend ulanguncha brauzer xotirasida namunaviy ma'lumot.
-// TODO: backend — GET /partner/bookings?date=…, PATCH /partner/bookings/:id { status }, GET /partner/stats
+import { api } from "./client";
+import { cacheRead, cacheWrite, ctx, hm } from "./venueAdmin";
+// Hamkor paneli: mijozlar bronlari va statistikasi — backend `/v1/venue/bookings`, `/v1/venue/analytics/*`.
+// O'qish keshdan (sinxron), `syncBookings()` / `syncStats()` backend'dan yangilaydi.
+// "Keldi": backend'da kelishni qayd etish faqat mijoz QR kodi orqali (check-in) — shu sababli bron tasdiqlanadi,
+// stolga buyurtma ochiladi va "keldi" holati keshda belgilanadi.
 
 export type BookingStatus = "kutilmoqda" | "keldi" | "bekor";
 export type PartnerBooking = {
@@ -14,6 +18,8 @@ export type PartnerBooking = {
   people: number;
   table: string; // "Stol 12 (Teras)"
   status: BookingStatus;
+  /** Backend: stol id (buyurtma ochish uchun) */
+  tableId?: number | null;
 };
 
 const KEY = "bazmly:partner:bookings";
@@ -30,70 +36,84 @@ export const WEEKDAYS_SHORT = ["Yak", "Dush", "Sesh", "Chor", "Pay", "Jum", "Sha
 /** "12 Oktyabr, Seshanba" */
 export const longDate = (d: Date) => `${d.getDate()} ${MONTHS_UZ[d.getMonth()]}, ${WEEKDAYS_UZ[d.getDay()]}`;
 
-// Sana bo'yicha barqaror "tasodifiy" son — har safar bir xil namunaviy ma'lumot chiqishi uchun
-function rand(seed: string) {
-  let h = 2166136261;
-  for (const c of seed) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); }
-  return () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; return ((h >>> 0) % 10000) / 10000; };
-}
+const ARRIVED = "bazmly:partner:arrived";
+const STATS = "bazmly:partner:stats";
 
-const NAMES = [
-  "Alisher Usmonov", "Bekzod Sharipov", "Dilnoza Karimova", "Jasur Toshmatov", "Madina Rahimova", "Sardor Aliyev",
-  "Nodira Yusupova", "Otabek Nazarov", "Shahnoza Ergasheva", "Javohir Qodirov", "Malika Abdullayeva", "Ulug‘bek Saidov",
-];
-const PLACES = ["", " (Teras)", " (Zal)", " (VIP)"];
-const TIMES = ["12:00", "13:30", "14:00", "17:00", "18:00", "18:30", "19:00", "19:30", "20:00", "20:30", "21:00"];
-
-function seed(today = new Date()): PartnerBooking[] {
-  const out: PartnerBooking[] = [];
-  for (let off = -3; off <= 7; off++) {
-    const day = addDays(today, off);
-    const r = rand(iso(day));
-    const n = off === 0 ? 9 : off === 1 ? 6 : 3 + Math.floor(r() * 5);
-    for (let i = 0; i < n; i++) {
-      // Bugun: 5 ta kutilmoqda, 3 ta keldi, 1 ta bekor qilingan; o'tgan kunlar — yakunlangan
-      const status: BookingStatus = off < 0 ? (r() < 0.85 ? "keldi" : "bekor")
-        : off === 0 ? (i < 5 ? "kutilmoqda" : i < 8 ? "keldi" : "bekor") : "kutilmoqda";
-      out.push({
-        id: `${iso(day)}-${i}`,
-        name: NAMES[Math.floor(r() * NAMES.length)],
-        phone: `+99890${String(1000000 + Math.floor(r() * 8999999)).slice(0, 7)}`,
-        date: iso(day),
-        time: TIMES[Math.floor(r() * TIMES.length)],
-        people: 2 + Math.floor(r() * 7),
-        table: `Stol ${pad(1 + Math.floor(r() * 20))}${PLACES[Math.floor(r() * PLACES.length)]}`,
-        status,
-      });
-    }
-  }
-  return out.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-}
+type BBooking = {
+  id: number; kind: "table_reservation" | "hall_event"; status: string; booking_date: string; start_time: string;
+  guests_count: number; contact_name: string; contact_phone: string; table_id: number | null; table_number: number | null;
+};
+const STATUS: Record<string, BookingStatus> = {
+  pending: "kutilmoqda", confirmed: "kutilmoqda", checked_in: "keldi", completed: "keldi", cancelled: "bekor", no_show: "bekor", expired: "bekor",
+};
+const write = (list: PartnerBooking[]) => cacheWrite(accountKey(KEY), list.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)));
 
 export function readBookings(): PartnerBooking[] {
-  try {
-    const raw = localStorage.getItem(accountKey(KEY));
-    if (raw) {
-      const list = JSON.parse(raw) as PartnerBooking[];
-      // Namunaviy ma'lumot bugungi kun atrofida bo'lishi kerak — kun almashgan bo'lsa yangilanadi
-      if (list.some((b) => b.date === iso(new Date()))) return list;
+  return cacheRead<PartnerBooking[]>(accountKey(KEY), []);
+}
+
+/** Berilgan kunlar bronlarini backend'dan oladi (stol bronlari) va keshga yozadi */
+export async function syncBookings(days: string[]): Promise<PartnerBooking[]> {
+  const c = ctx();
+  if (!c || !days.length) return readBookings();
+  const arrived = new Set(cacheRead<string[]>(accountKey(ARRIVED), []));
+  const lists = await Promise.all(days.map((day) => api<BBooking[]>("/v1/venue/bookings", { query: { venue_id: c.venueId, day } }).catch(() => null)));
+  const fetched = new Set(days.filter((_, i) => lists[i]));
+  const fresh: PartnerBooking[] = lists.flatMap((l) => l ?? []).filter((b) => b.kind === "table_reservation").map((b) => {
+    let status = STATUS[b.status] ?? "kutilmoqda";
+    if (status === "kutilmoqda" && arrived.has(String(b.id))) status = "keldi";
+    return {
+      id: String(b.id), name: b.contact_name, phone: b.contact_phone, date: b.booking_date, time: hm(b.start_time),
+      people: b.guests_count, table: b.table_number ? `Stol ${String(b.table_number).padStart(2, "0")}` : "Stol —", status, tableId: b.table_id,
+    };
+  });
+  // Namunaviy (eski) yozuvlar va yangilangan kunlar almashtiriladi
+  return write([...readBookings().filter((b) => /^\d+$/.test(b.id) && !fetched.has(b.date)), ...fresh]);
+}
+/** Bugundan boshlab `n` kun (va kecha) */
+export const nextDays = (n = 14, from = new Date()) => Array.from({ length: n + 1 }, (_, i) => iso(addDays(from, i - 1)));
+
+/** Holatni o'zgartirish: "keldi" — tasdiqlash (+ keshda belgi), "bekor" — rad etish */
+export async function setBookingStatus(id: string, status: BookingStatus): Promise<PartnerBooking[]> {
+  const c = ctx();
+  if (c) {
+    if (status === "bekor") await api(`/v1/venue/bookings/${id}/reject`, { method: "POST", query: { venue_id: c.venueId }, body: {} });
+    if (status === "keldi") {
+      await api(`/v1/venue/bookings/${id}/confirm`, { method: "POST", query: { venue_id: c.venueId } }).catch(() => {});
+      cacheWrite(accountKey(ARRIVED), [...cacheRead<string[]>(accountKey(ARRIVED), []), id]);
     }
-  } catch {}
-  const list = seed();
-  try { localStorage.setItem(accountKey(KEY), JSON.stringify(list)); } catch {}
-  return list;
+  }
+  return write(readBookings().map((b) => (b.id === id ? { ...b, status } : b)));
 }
 
-export function setBookingStatus(id: string, status: BookingStatus) {
-  const list = readBookings().map((b) => (b.id === id ? { ...b, status } : b));
-  try { localStorage.setItem(accountKey(KEY), JSON.stringify(list)); } catch {}
-  return list;
-}
+// ---------- Statistika ----------
+type Stats = { daily: Record<string, number>; months: Record<string, number> };
+const stats = () => cacheRead<Stats>(accountKey(STATS), { daily: {}, months: {} });
+const monthKey = (year: number, month: number) => { const d = new Date(year, month, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
 
-/** Kunlik band qilishlar soni (statistika uchun namunaviy) */
+/** Kunlik band qilishlar soni (backend kunlik hisobotidan; ma'lumot bo'lmasa — 0) */
 export function dailyCount(d: Date) {
-  const r = rand(`stat-${iso(d)}`);
-  const weekend = d.getDay() === 0 || d.getDay() === 6;
-  return Math.round(10 + r() * (weekend ? 190 : 110));
+  return stats().daily[iso(d)] ?? 0;
+}
+
+/** Grafik (joriy va keyingi hafta) va oylik jami uchun statistikani backend'dan oladi */
+export async function syncStats(today = new Date()) {
+  const c = ctx();
+  if (!c) return stats();
+  const monday = addDays(today, -((today.getDay() + 6) % 7));
+  const first = new Date(today.getFullYear(), today.getMonth(), 1), prevFirst = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  const last = new Date(today.getFullYear(), today.getMonth() + 1, 0), prevLast = new Date(today.getFullYear(), today.getMonth(), 0);
+  type Daily = { business_date: string; bookings_count: number };
+  type Totals = { current: { bookings_count: number }; previous: { bookings_count: number } };
+  const [daily, rev] = await Promise.all([
+    api<Daily[]>("/v1/venue/analytics/daily", { query: { venue_id: c.venueId, date_from: iso(monday), date_to: iso(addDays(monday, 13)) } }),
+    api<Totals>("/v1/venue/analytics/revenue", { query: { venue_id: c.venueId, current_from: iso(first), current_to: iso(last), previous_from: iso(prevFirst), previous_to: iso(prevLast) } }),
+  ]);
+  const s = stats();
+  for (const d of daily) s.daily[d.business_date] = d.bookings_count;
+  s.months[monthKey(today.getFullYear(), today.getMonth())] = rev.current.bookings_count;
+  s.months[monthKey(today.getFullYear(), today.getMonth() - 1)] = rev.previous.bookings_count;
+  return cacheWrite(accountKey(STATS), s);
 }
 
 /** Joriy haftaning dushanbasidan boshlab 14 kun */
@@ -106,10 +126,7 @@ export function twoWeeks(today = new Date()) {
 }
 
 export function monthCount(year: number, month: number) {
-  const days = new Date(year, month + 1, 0).getDate();
-  let s = 0;
-  for (let i = 1; i <= days; i++) s += dailyCount(new Date(year, month, i));
-  return s;
+  return stats().months[monthKey(year, month)] ?? 0;
 }
 
 /** O'tgan davrga nisbatan o'zgarish foizi */

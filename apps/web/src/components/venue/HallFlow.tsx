@@ -15,9 +15,11 @@ import {
   type Catering, CATERING_PER_GUEST, GUEST_TIERS, HALL_DEPOSIT_PCT, HALL_STEPS, hallDraftKey, hallQuote,
   readDraft, readHallDraft, saveHallDraft, SERVICE_FEE, draftKey,
 } from "@bazmly/api/booking";
-import { BOOKINGS_KEY, readCard, saveCard, type SavedCard } from "@bazmly/api/payment";
+import { createHallBooking, fetchBooking } from "@bazmly/api/bookings";
+import { errorText } from "@bazmly/api/client";
+import { readCard, saveCard, type SavedCard } from "@bazmly/api/payment";
 import { formatNum, type VenueDetails } from "@bazmly/api/venues";
-import { CardForm, formatPhone, OtpStep, randomDigits } from "./BookingConfirm";
+import { CardForm, formatPhone, OtpStep } from "./BookingConfirm";
 import { Stepper } from "./Stepper";
 
 const base = (v: VenueDetails) => `/toyxonalar/${v.id}/bron`;
@@ -274,24 +276,25 @@ export function HallConfirm({ v }: { v: VenueDetails }) {
   const q = useMemo(() => hallQuote(h.tier, h.catering ?? "self"), [h]);
   if (!ready) return null;
 
-  const pay = (c: SavedCard) => {
+  // Bron backendda yaratiladi (POST /v1/bookings/hall). Depozitni karta orqali yechish uchun API yo'q — to'lov namunaviy.
+  const pay = async (c: SavedCard) => {
+    void c;
     const d = readDraft(v.id);
-    const booking = {
-      id: `B${Date.now().toString().slice(-6)}`,
-      venueId: v.id, venueName: v.name, type: v.type,
-      date: d.date, time: d.time, people: q.tier.guests, guestTier: q.tier.label, catering: q.catering,
-      name: user.name ?? "", phone: user.phone ?? "",
-      method: "karta" as const, card: c.last4, total: q.total, amount: q.deposit, createdAt: new Date().toISOString(),
-      receipt: randomDigits(10), code: randomDigits(16),
-    };
+    if (!d.date || !d.time) return router.replace(base(v));
     try {
-      const list = JSON.parse(localStorage.getItem(BOOKINGS_KEY) ?? "[]");
-      localStorage.setItem(BOOKINGS_KEY, JSON.stringify([booking, ...list]));
-      sessionStorage.removeItem(draftKey(v.id));
-      sessionStorage.removeItem(hallDraftKey(v.id));
-    } catch {}
-    // TODO: backend — POST /bookings + depozitni yechish
-    router.push(`${base(v)}/tasdiqlandi?id=${booking.id}`);
+      const booking = await createHallBooking({
+        v, date: d.date, time: d.time, guests: q.tier.guests, catering: q.catering === "ready",
+        name: user.name ?? "", phone: user.phone ?? "",
+      });
+      try {
+        sessionStorage.setItem(`bazmly:hall-meta:${booking.id}`, JSON.stringify({ guestTier: q.tier.label, catering: q.catering, amount: q.deposit }));
+        sessionStorage.removeItem(draftKey(v.id));
+        sessionStorage.removeItem(hallDraftKey(v.id));
+      } catch {}
+      router.push(`${base(v)}/tasdiqlandi?id=${booking.id}`);
+    } catch (e) {
+      toast(errorText(e, "Bron qilib bo‘lmadi, qayta urinib ko‘ring"));
+    }
   };
 
   const cancel = () => {
@@ -415,10 +418,20 @@ export function HallSuccess({ v }: { v: VenueDetails }) {
   const id = params.get("id");
   const [b, setB] = useState<HallBooking | null | undefined>(undefined);
   useEffect(() => {
-    try {
-      const list: HallBooking[] = JSON.parse(localStorage.getItem(BOOKINGS_KEY) ?? "[]");
-      setB(list.find((x) => x.id === id && x.venueId === v.id) ?? null);
-    } catch { setB(null); }
+    let alive = true;
+    fetchBooking(id ?? "").then((x) => {
+      if (!alive) return;
+      if (!x || x.venueId !== v.id) return setB(null);
+      // Tanlangan paket nomi va to'langan depozit (namunaviy to'lov) — shu qurilmada saqlangan
+      let meta: Partial<HallBooking> = {};
+      try { meta = JSON.parse(sessionStorage.getItem(`bazmly:hall-meta:${x.id}`) ?? "{}"); } catch {}
+      setB({
+        id: x.id, venueId: x.venueId, date: x.date, time: x.time, people: x.people,
+        guestTier: meta.guestTier ?? x.guestTier, catering: meta.catering ?? (x.services?.length ? "ready" : "self"),
+        amount: meta.amount ?? x.amount,
+      });
+    });
+    return () => { alive = false; };
   }, [id, v.id]);
 
   if (b === undefined) return null;

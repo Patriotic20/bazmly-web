@@ -4,6 +4,8 @@ export type BookingDraft = {
   date?: string; // YYYY-MM-DD
   time?: string; // HH:MM
   table?: number;
+  /** Backend stol id (bron yaratishda kerak) */
+  tableId?: number;
   name?: string;
   phone?: string;
 };

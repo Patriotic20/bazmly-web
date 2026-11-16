@@ -3,6 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { AuthCard, primaryBtn } from "@/components/auth/AuthCard";
+import { login, phoneCheck } from "@bazmly/api/auth";
+import { errorText } from "@bazmly/api/client";
+import { syncMe } from "@bazmly/api/user";
 import { PHONE_KEY } from "../RegisterForm";
 
 const LEN = 6;
@@ -15,6 +18,7 @@ export function CodeForm() {
   const [left, setLeft] = useState(COOLDOWN);
   const [toast, setToast] = useState<string | null>(null);
   const refs = useRef<(HTMLInputElement | null)[]>([]);
+  const busy = useRef(false);
 
   // Telefon raqamisiz bu sahifaga kirilsa — orqaga
   useEffect(() => {
@@ -72,7 +76,7 @@ export function CodeForm() {
     setTimeout(() => setToast(null), 2500);
   };
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const value = code.join("");
     if (value.length !== LEN) {
@@ -80,8 +84,23 @@ export function CodeForm() {
       refs.current[code.findIndex((d) => !d)]?.focus();
       return;
     }
-    // TODO: backend — POST /auth/verify-code; hozircha istalgan 6 xonali kod qabul qilinadi
-    router.push("/royxatdan-otish/ism");
+    // SMS kod backendda hali yo'q — istalgan 6 xonali kod qabul qilinadi.
+    // Raqam ro'yxatdan o'tgan bo'lsa — darhol kirish, aks holda ism bosqichi.
+    if (busy.current) return;
+    busy.current = true;
+    try {
+      const phone = sessionStorage.getItem(PHONE_KEY) ?? "";
+      const check = await phoneCheck(phone);
+      if (!check.registered) return router.push("/royxatdan-otish/ism");
+      await login(phone);
+      await syncMe();
+      sessionStorage.removeItem(PHONE_KEY);
+      router.replace("/");
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      busy.current = false;
+    }
   };
 
   return (

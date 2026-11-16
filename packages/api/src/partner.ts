@@ -1,7 +1,15 @@
 "use client";
 
-// Hamkor (restoran / to'yxona egasi) ma'lumotlari — backend ulanguncha brauzer xotirasida.
-// TODO: backend — POST /partners (ro'yxatdan o'tish), POST /auth/partner/otp (kirish)
+// Hamkor (restoran / to'yxona egasi) ma'lumotlari.
+// Backend: akkaunt = filial (`/v1/venue/venues`), egasi = tarmoq (`/v1/venue/groups`). Kirish — `/v1/auth/login`.
+// Sahifalar tez ochilishi uchun akkaunt ma'lumoti brauzer xotirasida ham saqlanadi (kesh) va kirishda yangilanadi.
+// SMS kod hozircha backendda yo'q — ekrandagi kod bosqichi namunaviy.
+import { login, logoutRemote, phoneCheck, register } from "./auth";
+import { api, isAuthed, toNum } from "./client";
+import {
+  districtAddress, fromWorkingDays, putTables, putWorkingHours, resolveDistrict, uploadImage,
+  type BGroup, type BTable, type BVenue, type BVenueDetail, type VenueTypeSlug,
+} from "./venueAdmin";
 
 /** "barchasi" — eski akkauntlar uchun; yangi akkaunt faqat restoran yoki to'yxona bo'ladi */
 export type VenueKind = "restoran" | "toyxona" | "barchasi";
@@ -26,6 +34,8 @@ export type PartnerAccount = Required<Pick<PartnerDraft, "name" | "kind">> & Par
   avatar?: string;
   /** Akkaunt id — bitta egada bir nechta akkaunt (masalan restoran va to'yxona) */
   id?: string;
+  /** Backend: filial va tarmoq id */
+  venueId?: number; groupId?: number;
 };
 /** Akkaunt o'zgarganda (sozlamalar) — sarlavha kabi joylar yangilanishi uchun */
 export const ACCOUNT_EVENT = "bazmly:partner-account";
@@ -109,21 +119,163 @@ export function updateAccount(patch: Partial<PartnerAccount>) {
   try { window.dispatchEvent(new Event(ACCOUNT_EVENT)); } catch {}
   return next;
 }
+/** Akkaunt sozlamalarini backend'ga saqlaydi, so'ng keshni yangilaydi. Xatolikda null. */
+export async function saveAccount(patch: Partial<PartnerAccount>): Promise<PartnerAccount | null> {
+  const acc = readAccount();
+  if (!acc?.venueId) return null;
+  const id = acc.venueId;
+  const q = { venue_id: id };
+  try {
+    const body: Record<string, unknown> = {};
+    if (patch.name !== undefined) body.name = patch.name;
+    if (patch.minAdvance !== undefined) body.min_advance_booking_days = patch.minAdvance;
+    if (patch.seats !== undefined) body.total_seats = patch.seats;
+    if (patch.location) { body.latitude = Number(patch.location.lat.toFixed(6)); body.longitude = Number(patch.location.lng.toFixed(6)); }
+    if (Object.keys(body).length) await api(`/v1/venue/venues/${id}`, { method: "PATCH", query: q, body });
+    if (patch.hours || patch.days) await putWorkingHours(id, patch.days ?? acc.days, patch.hours ?? acc.hours);
+    if (patch.tables) {
+      // Backend stollarni faqat qo'shadi (o'chirish yo'li yo'q) — yetishmayotgan stollar qo'shiladi
+      const cur = await api<BTable[]>(`/v1/venue/venues/${id}/tables`, { query: q });
+      const have = tablesFrom(cur);
+      const add = Object.fromEntries(TABLE_SIZES.map((n) => [n, Math.max(0, (patch.tables![n] ?? 0) - (have[n] ?? 0))]));
+      await putTables(id, add);
+    }
+    if (patch.avatar !== undefined) {
+      const url = await uploadImage(patch.avatar);
+      const det = await api<BVenueDetail>(`/v1/venues/${id}`);
+      const rest = det.photos.sort((a, b) => a.sort_order - b.sort_order).map((p) => p.url).filter((u) => u !== url);
+      await api(`/v1/venue/venues/${id}/photos`, { method: "PUT", query: q, body: { urls: [url, ...rest].filter(Boolean).slice(0, 5) } });
+      patch = { ...patch, avatar: url ?? undefined };
+    }
+  } catch { return null; }
+  return updateAccount(patch);
+}
+
+// ---------- Backend ↔ akkaunt ----------
+const SIZE = (seats: number) => (TABLE_SIZES as readonly number[]).reduce((best, n) => (seats >= n ? n : best), 2) as (typeof TABLE_SIZES)[number];
+/** Backend stollari → { 2: 3, 4: 5, ... } (10 — "10+ kishilik") */
+export function tablesFrom(list: BTable[]): Tables {
+  const t: Tables = {};
+  for (const x of list) if (x.is_active) { const k = SIZE(x.seats); t[k] = (t[k] ?? 0) + 1; }
+  return t;
+}
+
+async function venueToAccount(v: BVenue, phone: string): Promise<PartnerAccount> {
+  const [det, tables, addr] = await Promise.all([
+    api<BVenueDetail>(`/v1/venues/${v.id}`).catch(() => null),
+    api<BTable[]>(`/v1/venue/venues/${v.id}/tables`, { query: { venue_id: v.id } }).catch(() => [] as BTable[]),
+    districtAddress(v.district_id, { lat: Number(v.latitude), lng: Number(v.longitude) }),
+  ]);
+  const wh = det ? fromWorkingDays(det.working_hours) : {};
+  const cover = det?.photos.find((p) => p.is_cover) ?? det?.photos[0];
+  return {
+    id: `v${v.id}`, venueId: v.id, groupId: v.venue_group_id,
+    name: v.name, kind: v.venue_type, phone,
+    address: { region: addr.region, city: addr.city, street: v.street, house: v.house_number && v.house_number !== "-" ? v.house_number : undefined },
+    tables: tablesFrom(tables), seats: v.total_seats ?? undefined,
+    hours: wh.hours, days: wh.days,
+    minAdvance: ([1, 2, 3].includes(v.min_advance_booking_days) ? v.min_advance_booking_days : 1) as AdvanceDays,
+    location: { lat: toNum(v.latitude), lng: toNum(v.longitude) },
+    avatar: cover?.url, createdAt: new Date().toISOString(),
+  };
+}
+
+/** Har bir faoliyat turi uchun bitta akkaunt — shu turdagi eng birinchi filial (qolganlari "Filiallar" bo'limida) */
+export const accountVenues = (venues: BVenue[]) => {
+  const out: BVenue[] = [];
+  for (const v of [...venues].sort((a, b) => a.id - b.id)) if (!out.some((x) => x.venue_type === v.venue_type)) out.push(v);
+  return out;
+};
+
+/** Kirgan egasining akkauntlarini backend'dan oladi va keshga yozadi. `activeVenueId` — faol qilinadigan filial. */
+export async function syncAccounts(phone: string, activeVenueId?: number): Promise<PartnerAccount[]> {
+  let group: BGroup;
+  try { group = await api<BGroup>("/v1/venue/groups/me"); } catch { return []; }
+  const venues = await api<BVenue[]>("/v1/venue/venues", { query: { group_id: group.id } });
+  const list = await Promise.all(accountVenues(venues).map((v) => venueToAccount(v, phone)));
+  if (!list.length) return [];
+  const prev = readAccount();
+  const keepId = activeVenueId ?? prev?.venueId;
+  const active = list.find((a) => a.venueId === keepId) ?? list.find((a) => a.kind === group.primary_venue_type) ?? list[0];
+  // Avvalgi keshdagi, backendda yo'q maydonlar (masalan, rasm) saqlanadi
+  const merged = list.map((a) => ({ ...(prev && prev.venueId === a.venueId ? { location: prev.location } : {}), ...a }));
+  try {
+    localStorage.setItem(ACCOUNTS, JSON.stringify(merged));
+    localStorage.setItem(ACCOUNT, JSON.stringify(merged.find((a) => a.id === active.id)));
+    localStorage.setItem(SESSION, phone);
+  } catch {}
+  try { window.dispatchEvent(new Event(ACCOUNT_EVENT)); } catch {}
+  return merged;
+}
+
+/**
+ * Ro'yxatdan o'tish (backend): telefon bo'yicha kirish yoki yangi foydalanuvchi, so'ng tarmoq + filial,
+ * ish vaqti, stollar va boshlang'ich sozlash bosqichlari. `add` — kirgan egasi yangi akkaunt qo'shmoqda.
+ */
+export async function createAccountRemote(phone: string, add = false): Promise<PartnerAccount | null> {
+  const d = readDraft();
+  if (!d.name || !d.kind || d.kind === "barchasi" || !d.address?.region) return null;
+  try {
+    if (!add || !isAuthed()) {
+      const chk = await phoneCheck(phone);
+      if (chk.registered) await login(phone); else await register(phone, d.name);
+    }
+    const dist = await resolveDistrict(d.address.region, d.address.city);
+    if (!dist) return null;
+    const branch = {
+      district_id: dist.id, street: d.address.street || d.address.city || d.address.region, house_number: d.address.house || "-",
+      latitude: dist.lat, longitude: dist.lng, phone, name: d.name, venue_type: d.kind as VenueTypeSlug,
+      total_seats: d.seats ?? null, min_advance_booking_days: d.minAdvance ?? 1,
+    };
+    const group = await api<BGroup>("/v1/venue/groups/me").catch(() => null);
+    let venueId: number;
+    if (group) {
+      const v = await api<BVenue>("/v1/venue/venues", { method: "POST", query: { group_id: group.id }, body: branch });
+      venueId = v.id;
+    } else {
+      const r = await api<{ group: BGroup; branches: { id: number }[] }>("/v1/venue/groups", {
+        method: "POST", body: { group: { primary_venue_type: d.kind, name: d.name }, branch },
+      });
+      venueId = r.branches[0].id;
+    }
+    const q = { venue_id: venueId };
+    await api(`/v1/venue/venues/${venueId}/onboarding/address`, { method: "PATCH", query: q, body: { street: branch.street, house_number: branch.house_number } }).catch(() => {});
+    await putWorkingHours(venueId, d.days, d.hours);
+    if (d.tables) await putTables(venueId, d.tables);
+    for (const step of ["tables-done", "services-done", "media-done"]) await api(`/v1/venue/venues/${venueId}/onboarding/${step}`, { method: "PATCH", query: q }).catch(() => {});
+    await api(`/v1/venue/venues/${venueId}/onboarding/finish`, { method: "POST", query: q }).catch(() => {});
+    const owner = add ? readAccount()?.phone ?? phone : phone;
+    const list = await syncAccounts(owner, venueId);
+    clearDraft();
+    return list.find((a) => a.venueId === venueId) ?? null;
+  } catch { return null; }
+}
+
 /** Ro'yxatdan o'tishning barcha bosqichlari to'ldirilganmi */
 export const draftReady = (d: PartnerDraft) => !!(d.name && d.kind && d.address?.region && d.seats && d.hours && d.days && d.minAdvance);
-/** Kirish: shu telefon bilan akkaunt bo'lsa sessiya ochiladi */
-export function signIn(phone: string) {
-  const acc = readAccount();
-  if (!acc || acc.phone !== phone) {
-    const other = readAccounts().find((x) => x.phone === phone);
-    if (!other?.id || !switchAccount(other.id)) return false;
-  }
-  try { localStorage.setItem(SESSION, phone); } catch {}
-  return true;
+/** Kirish (backend): ro'yxatdan o'tgan telefon bo'lsa — token olinadi va akkauntlar yuklanadi */
+export async function signIn(phone: string): Promise<boolean> {
+  try {
+    const chk = await phoneCheck(phone);
+    if (!chk.registered) return false;
+    await login(phone);
+    const list = await syncAccounts(phone);
+    if (!list.length) { await logoutRemote(); return false; }
+    return true;
+  } catch { return false; }
 }
-export function signOut() { try { localStorage.removeItem(SESSION); } catch {} }
+/** Panelga kirganda keshdagi akkauntlarni backend'dan yangilaydi (fon rejimida) */
+export function refreshAccounts() {
+  let phone: string | null = null;
+  try { phone = localStorage.getItem(SESSION); } catch {}
+  return phone ? syncAccounts(phone).catch(() => []) : Promise.resolve([]);
+}
+export function signOut() {
+  void logoutRemote();
+  try { localStorage.removeItem(SESSION); localStorage.removeItem(ACCOUNT); localStorage.removeItem(ACCOUNTS); } catch {}
+}
 export function isSignedIn() {
-  try { const s = localStorage.getItem(SESSION); return !!s && readAccount()?.phone === s; } catch { return false; }
+  try { return isAuthed() && !!localStorage.getItem(SESSION) && !!readAccount()?.venueId; } catch { return false; }
 }
 
 export const addressText = (a?: PartnerAddress) =>

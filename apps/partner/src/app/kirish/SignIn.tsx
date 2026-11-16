@@ -25,10 +25,16 @@ export function SignIn() {
     // TODO: backend — POST /auth/partner/otp
     setSent(true); setLeft(60); setTimeout(() => codeRef.current?.focus(), 50);
   };
-  const verify = () => {
+  const [busy, setBusy] = useState(false);
+  const verify = async () => {
     if (code.length !== 6) return toast("SMS kodni to‘liq kiriting");
+    if (busy) return;
     const full = `+998${phone}`;
-    if (!signIn(full)) return toast("Bu raqam bilan akkaunt topilmadi — ro‘yxatdan o‘ting");
+    // SMS kod backendda hali yo'q — istalgan 6 xonali kod qabul qilinadi, so'ng backend orqali kiriladi
+    setBusy(true);
+    const ok = await signIn(full);
+    setBusy(false);
+    if (!ok) return toast("Bu raqam bilan akkaunt topilmadi — ro‘yxatdan o‘ting");
     router.replace("/panel");
   };
 

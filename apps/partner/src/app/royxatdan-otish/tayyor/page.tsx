@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { addressText, isSignedIn, readAccount, updateAccount, type PartnerAccount } from "@bazmly/api/partner";
+import { addressText, isSignedIn, readAccount, saveAccount, type PartnerAccount } from "@bazmly/api/partner";
 import { useToast } from "@bazmly/ui/Toast";
 import { PartnerCard } from "@/components/PartnerCard";
 
@@ -32,7 +32,7 @@ export default function LivePage() {
     try { sessionStorage.setItem(ASKED, "1"); } catch {}
     if (!allow) return;
     navigator.geolocation.getCurrentPosition(
-      (p) => { const next = updateAccount({ location: { lat: p.coords.latitude, lng: p.coords.longitude } }); if (next) setAcc(next); toast("Joylashuv saqlandi"); },
+      async (p) => { const next = await saveAccount({ location: { lat: p.coords.latitude, lng: p.coords.longitude } }); if (!next) return toast("Saqlab bo‘lmadi"); setAcc(next); toast("Joylashuv saqlandi"); },
       () => toast("Joylashuvga ruxsat berilmadi — keyinroq sozlamalardan yoqishingiz mumkin"),
       { enableHighAccuracy: true, timeout: 10000 },
     );

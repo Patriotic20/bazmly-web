@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { daysText, readAccount, updateAccount, type DayRange } from "@bazmly/api/partner";
+import { daysText, readAccount, saveAccount, type DayRange } from "@bazmly/api/partner";
 import { useToast } from "@bazmly/ui/Toast";
 import { DaysPicker } from "@/components/DaysPicker";
 import { SettingsCard } from "@/components/SettingsCard";
@@ -15,8 +15,8 @@ export default function DaysSettings() {
   useEffect(() => setDays(readAccount()?.days), []);
   const back = () => router.push("/panel/sozlamalar/profil");
 
-  const save = (r: DayRange) => {
-    if (!updateAccount({ days: r })) return toast("Saqlab bo‘lmadi");
+  const save = async (r: DayRange) => {
+    if (!(await saveAccount({ days: r }))) return toast("Saqlab bo‘lmadi");
     toast(`Ish kunlari saqlandi: ${daysText(r)}`);
     back();
   };

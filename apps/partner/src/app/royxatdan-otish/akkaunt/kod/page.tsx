@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { createAccount } from "@bazmly/api/partner";
+import { createAccountRemote } from "@bazmly/api/partner";
 import { focusFirstEmpty, OtpBoxes } from "@bazmly/ui/OtpBoxes";
 import { useToast } from "@bazmly/ui/Toast";
 import { PartnerCard, primaryBtn } from "@/components/PartnerCard";
@@ -32,11 +32,17 @@ export default function CodePage() {
     setLeft(COOLDOWN);
     toast("Kod qayta yuborildi");
   };
-  const submit = (e?: React.FormEvent) => {
+  const [busy, setBusy] = useState(false);
+  const submit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (code.join("").length !== LEN) { setError(true); focusFirstEmpty(code); return toast("Kodni to‘liq kiriting"); }
-    // TODO: backend — POST /auth/partner/verify; hozircha istalgan 6 xonali kod qabul qilinadi
-    if (!draft?.phone || !createAccount(draft.phone)) return router.replace("/royxatdan-otish");
+    if (busy) return;
+    // SMS kod backendda hali yo'q — istalgan 6 xonali kod qabul qilinadi; akkaunt backend'da yaratiladi
+    if (!draft?.phone) return router.replace("/royxatdan-otish");
+    setBusy(true);
+    const acc = await createAccountRemote(draft.phone);
+    setBusy(false);
+    if (!acc) return toast("Akkauntni yaratib bo‘lmadi");
     router.replace("/royxatdan-otish/tayyor");
   };
 

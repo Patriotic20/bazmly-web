@@ -1,14 +1,18 @@
 "use client";
 
 import { accountKey } from "./partner";
-// Hamkor paneli: stollar va buyurtmalar — backend ulanguncha brauzer xotirasida namunaviy ma'lumot.
-// TODO: backend — GET /partner/tables, GET/POST/PATCH /partner/orders
+import { api, toNum } from "./client";
+import { cacheRead, cacheWrite, ctx, utc, type BTable, type BZone } from "./venueAdmin";
+// Hamkor paneli: stollar va buyurtmalar (cheklar) — backend `/v1/venue/orders/*`, `/v1/venue/venues/{id}/tables`.
+// O'qish keshdan (sinxron), `syncTables()` / `syncOrders()` backend'dan yangilaydi.
+// Backend buyurtmalar ro'yxati faqat bugungi ish kuni uchun — o'tgan kunlar keshdan ko'rsatiladi.
 
 import type { Dish } from "./menu";
-import type { PartnerBooking } from "./partnerBookings";
+import { readBookings, type PartnerBooking } from "./partnerBookings";
+import { readStaff } from "./staff";
 
 export type Zone = "ichkari" | "tashqari";
-export type TableInfo = { no: number; seats: number; zone: Zone };
+export type TableInfo = { no: number; seats: number; zone: Zone; id?: number };
 export type OrderStatus = "keldi" | "jarayonda" | "tolov" | "yakunlandi";
 export type OrderItem = { dishId: string; name: string; qty: number; price: number };
 export type Order = {
@@ -22,99 +26,110 @@ const pad = (n: number) => String(n).padStart(2, "0");
 const iso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const hm = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
-export const TABLES: TableInfo[] = [
-  { no: 12, seats: 6, zone: "ichkari" }, { no: 5, seats: 4, zone: "ichkari" }, { no: 8, seats: 6, zone: "ichkari" },
-  { no: 1, seats: 4, zone: "ichkari" }, { no: 3, seats: 4, zone: "ichkari" }, { no: 7, seats: 2, zone: "ichkari" },
-  { no: 9, seats: 2, zone: "ichkari" }, { no: 11, seats: 4, zone: "ichkari" }, { no: 4, seats: 6, zone: "ichkari" },
-  { no: 6, seats: 6, zone: "ichkari" }, { no: 2, seats: 4, zone: "ichkari" }, { no: 10, seats: 4, zone: "ichkari" },
-  { no: 14, seats: 4, zone: "tashqari" }, { no: 15, seats: 6, zone: "tashqari" }, { no: 16, seats: 2, zone: "tashqari" }, { no: 17, seats: 8, zone: "tashqari" },
-];
-/** Stollar ro'yxatdan o'tishdagi "Joylar soni"dan olinadi (2, 4, 6, 8, 10+ kishilik), bo'lmasa — namunaviy ro'yxat */
+const TABLES_KEY = "bazmly:partner:tables";
+/** Filial stollari (backend'dan, keshda) */
 export function readTables(): TableInfo[] {
-  try {
-    const acc = JSON.parse(localStorage.getItem("bazmly:partner") ?? "null") as { tables?: Partial<Record<number, number>> } | null;
-    const t = acc?.tables;
-    if (t && Object.values(t).some((n) => (n ?? 0) > 0)) {
-      const out: TableInfo[] = [];
-      for (const size of [2, 4, 6, 8, 10]) for (let i = 0; i < (t[size] ?? 0) && out.length < 200; i++) out.push({ no: out.length + 1, seats: size, zone: "ichkari" });
-      return out;
-    }
-  } catch {}
-  return TABLES;
+  return cacheRead<TableInfo[]>(accountKey(TABLES_KEY), []);
+}
+export async function syncTables(): Promise<TableInfo[]> {
+  const c = ctx();
+  if (!c) return readTables();
+  const q = { venue_id: c.venueId };
+  const [tables, zones] = await Promise.all([
+    api<BTable[]>(`/v1/venue/venues/${c.venueId}/tables`, { query: q }),
+    api<BZone[]>(`/v1/venue/venues/${c.venueId}/zones`, { query: q }).catch(() => [] as BZone[]),
+  ]);
+  const zoneOf = (id: number | null) => (zones.find((z) => z.id === id)?.slug === "tashqari" ? "tashqari" : "ichkari") as Zone;
+  return cacheWrite(accountKey(TABLES_KEY), tables.filter((t) => t.is_active).sort((a, b) => a.number - b.number).map((t) => ({ no: t.number, seats: t.seats, zone: zoneOf(t.zone_id), id: t.id })));
 }
 
-const WAITERS = ["Jasur A.", "Malika K.", "Aziza U.", "Dilnoza A."];
-const CUSTOMERS = ["Bekzod Sharipov", "Sardor Aliyev", "Nodira Yusupova", "Otabek Nazarov", "Madina Rahimova", "Javohir Qodirov", "Shahnoza Ergasheva", "Dilnoza Karimova"];
+type BOrderList = { id: number; status: string; opened_at: string };
+type BOrder = {
+  order: { id: number; table_id: number | null; booking_id: number | null; business_date: string; status: string; guests_count: number | null; waiter_staff_id: number | null; opened_at: string; closed_at: string | null; total_amount: string };
+  items: { menu_item_id: number; quantity: number; unit_price: string; name_snapshot: string; variant_name_snapshot: string | null; status: string }[];
+  payments: { method: string; amount: string }[];
+  paid_amount: string;
+};
+const LINKS = "bazmly:partner:order-bookings";
+const STATUS: Record<string, OrderStatus | undefined> = { open: "keldi", in_progress: "jarayonda", served: "jarayonda", awaiting_payment: "tolov", completed: "yakunlandi" };
 
-function seed(now = new Date()): Order[] {
-  const today = iso(now);
-  const ago = (min: number) => new Date(now.getTime() - min * 60000);
-  const items = (k: number): OrderItem[] => [
-    { dishId: "d9", name: "Osh (Plov)", qty: 2, price: 40000 }, { dishId: "d12", name: "Choy (Ko‘k)", qty: 1, price: 5000 },
-    { dishId: "d16", name: "Non", qty: 2, price: 3000 }, ...(k % 2 ? [{ dishId: "d14", name: "Kompot", qty: 1, price: 15000 }, { dishId: "d17", name: "Shashlik (qo‘y)", qty: 3, price: 28000 }] : []),
-  ];
-  const mk = (i: number, table: number, status: OrderStatus, minAgo: number, extra: Partial<Order> = {}): Order => {
-    const st = ago(minAgo);
-    return {
-      id: `o${i}`, table, waiter: WAITERS[i % WAITERS.length], customer: CUSTOMERS[i % CUSTOMERS.length], people: 2 + (i % 5),
-      date: today, time: hm(st), status, startedAt: st.toISOString(), items: status === "keldi" ? [] : items(i), ...extra,
-    };
+function toOrder(d: BOrder, tables: TableInfo[]): Order | null {
+  const o = d.order;
+  const status = STATUS[o.status];
+  if (!status) return null; // bekor qilingan
+  const started = new Date(utc(o.opened_at));
+  // Chek bron bilan ochilgan bo'lsa (backend'da yoki shu panelda "Keldi" orqali) — mijoz ismi bron'dan olinadi
+  const bookingId = o.booking_id ? String(o.booking_id) : cacheRead<Record<string, string>>(accountKey(LINKS), {})[String(o.id)];
+  const booking = bookingId ? readBookings().find((b) => b.id === bookingId) : undefined;
+  const waiter = o.waiter_staff_id ? readStaff().find((s) => s.id === String(o.waiter_staff_id))?.name : undefined;
+  const no = tables.find((t) => t.id === o.table_id)?.no ?? 0;
+  const items = d.items.filter((i) => i.status !== "cancelled").map((i) => ({
+    dishId: String(i.menu_item_id), name: i.variant_name_snapshot ? `${i.name_snapshot} (${i.variant_name_snapshot})` : i.name_snapshot,
+    qty: i.quantity, price: toNum(i.unit_price),
+  }));
+  return {
+    id: String(o.id), table: no, waiter: waiter ?? "—", customer: booking?.name ?? `Stol ${String(no).padStart(2, "0")}`, phone: booking?.phone,
+    people: o.guests_count ?? booking?.people ?? 0, date: o.business_date, time: hm(started), status: status === "keldi" && items.length ? "jarayonda" : status,
+    startedAt: started.toISOString(), finishedAt: o.closed_at ? new Date(utc(o.closed_at)).toISOString() : undefined,
+    pay: d.payments.length ? (d.payments[0].method === "cash" ? "naqd" : "karta") : undefined, items, bookingId,
   };
-  const list: Order[] = [
-    // Figma: stollar — 05 va 03 jarayonda, 08 va 11 to'lovda, 01 yakunlangan
-    mk(1, 5, "jarayonda", 25), mk(2, 3, "jarayonda", 40), mk(3, 8, "tolov", 70, { pay: "naqd" }), mk(4, 11, "tolov", 55, { pay: "karta" }),
-    mk(5, 1, "yakunlandi", 109, { finishedAt: ago(5).toISOString() }), mk(6, 14, "jarayonda", 15), mk(7, 15, "jarayonda", 32),
-    mk(8, 4, "keldi", 6), mk(9, 6, "jarayonda", 18), mk(10, 10, "keldi", 3),
-  ];
-  // Yakunlangan buyurtmalar: bugun va o'tgan 6 kun
-  let n = 11;
-  for (let d = 0; d < 7; d++) {
-    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - d);
-    for (let k = 0; k < (d === 0 ? 24 : 18 + (d % 4)); k++) {
-      const st = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 11 + (k % 11), (k * 17) % 60);
-      if (d === 0 && st > now) st.setTime(now.getTime() - (k + 2) * 7 * 60000);
-      list.push({
-        id: `o${n}`, table: TABLES[k % TABLES.length].no % 13 || 1, waiter: WAITERS[k % WAITERS.length], customer: CUSTOMERS[(k + d) % CUSTOMERS.length],
-        people: 2 + (k % 5), date: iso(st), time: hm(st), status: "yakunlandi", startedAt: st.toISOString(),
-        finishedAt: new Date(st.getTime() + 75 * 60000).toISOString(), items: items(k),
-      });
-      n++;
-    }
-  }
-  return list;
 }
 
 export function readOrders(): Order[] {
-  try {
-    const raw = localStorage.getItem(accountKey(ORDERS_KEY));
-    if (raw) { const list = JSON.parse(raw) as Order[]; if (list.some((o) => o.date === iso(new Date()))) return list; }
-  } catch {}
-  // Namunaviy buyurtmalar faqat mavjud stollar uchun
-  const nos = new Set(readTables().map((t) => t.no));
-  return write(seed().filter((o) => nos.has(o.table)));
+  return cacheRead<Order[]>(accountKey(ORDERS_KEY), []);
 }
-function write(list: Order[]) { try { localStorage.setItem(accountKey(ORDERS_KEY), JSON.stringify(list)); } catch {} return list; }
-const patch = (id: string, fn: (o: Order) => Order) => write(readOrders().map((o) => (o.id === id ? fn(o) : o)));
+function write(list: Order[]) { return cacheWrite(accountKey(ORDERS_KEY), list); }
+
+/** Bugungi cheklarni (taomlari bilan) backend'dan oladi; o'tgan kunlar keshda qoladi */
+export async function syncOrders(): Promise<Order[]> {
+  const c = ctx();
+  if (!c) return readOrders();
+  const q = { venue_id: c.venueId };
+  const tables = readTables().length ? readTables() : await syncTables();
+  const list = await api<BOrderList[]>("/v1/venue/orders", { query: q });
+  const details = await Promise.all(list.map((o) => api<BOrder>(`/v1/venue/orders/${o.id}`, { query: q }).catch(() => null)));
+  const fresh = details.flatMap((d) => (d ? [toOrder(d, tables)] : [])).filter((o): o is Order => !!o);
+  const days = new Set(fresh.map((o) => o.date).concat(iso(new Date())));
+  // Namunaviy (eski) yozuvlar va bugungi kun almashtiriladi
+  return write([...fresh, ...readOrders().filter((o) => /^\d+$/.test(o.id) && !days.has(o.date))]);
+}
 
 export const orderTotal = (o: Pick<Order, "items">) => o.items.reduce((s, i) => s + i.qty * i.price, 0);
-export const finishOrder = (id: string) => patch(id, (o) => ({ ...o, status: "yakunlandi", finishedAt: new Date().toISOString() }));
-export function addItem(id: string, d: Pick<Dish, "id" | "name" | "price">) {
-  return patch(id, (o) => {
-    const has = o.items.find((i) => i.dishId === d.id);
-    const items = has ? o.items.map((i) => (i.dishId === d.id ? { ...i, qty: i.qty + 1 } : i)) : [...o.items, { dishId: d.id, name: d.name, qty: 1, price: d.price }];
-    return { ...o, items, status: o.status === "keldi" ? "jarayonda" : o.status };
-  });
+/** Yakunlash: qolgan summa naqd to'lov sifatida qayd etiladi va chek yopiladi */
+export async function finishOrder(id: string): Promise<Order[]> {
+  const c = ctx();
+  if (!c) return readOrders();
+  const q = { venue_id: c.venueId };
+  const d = await api<BOrder>(`/v1/venue/orders/${id}`, { query: q });
+  const left = toNum(d.order.total_amount) - toNum(d.paid_amount);
+  if (left > 0) await api(`/v1/venue/orders/${id}/payments`, { method: "POST", query: q, body: { method: "cash", amount: left } });
+  await api(`/v1/venue/orders/${id}/close`, { method: "POST", query: q });
+  return syncOrders();
 }
-/** Bron qilgan mijoz keldi — stolga "keldi" holatidagi buyurtma ochiladi */
-export function openFromBooking(b: PartnerBooking) {
-  const list = readOrders();
-  if (list.some((o) => o.bookingId === b.id)) return list;
-  const no = Number(b.table.match(/\d+/)?.[0] ?? 0);
-  const now = new Date();
-  return write([{
-    id: `o${Date.now()}`, table: no, waiter: WAITERS[now.getMinutes() % WAITERS.length], customer: b.name, phone: b.phone, people: b.people,
-    date: iso(now), time: b.time, status: "keldi", startedAt: now.toISOString(), items: [], bookingId: b.id,
-  }, ...list]);
+/** Chekka taom qo'shish (variantli taom — eng arzon variant) */
+export async function addItem(id: string, d: Pick<Dish, "id" | "name" | "price"> & { variants?: Dish["variants"] }): Promise<Order[]> {
+  const c = ctx();
+  if (!c) return readOrders();
+  const q = { venue_id: c.venueId };
+  let variant_id: number | null = null;
+  if (d.variants?.length) {
+    const item = await api<{ variants: { id: number; price: string; is_active: boolean }[] }>(`/v1/venue/menu/items/${d.id}`, { query: q });
+    variant_id = item.variants.filter((v) => v.is_active).sort((a, b) => toNum(a.price) - toNum(b.price))[0]?.id ?? null;
+  }
+  await api(`/v1/venue/orders/${id}/items`, { method: "POST", query: q, body: [{ menu_item_id: Number(d.id), variant_id, quantity: 1 }] });
+  return syncOrders();
+}
+/** Bron qilgan mijoz keldi — uning stoliga chek ochiladi ("Buyurtmalar" bo'limida ko'rinadi) */
+export async function openFromBooking(b: PartnerBooking): Promise<Order[]> {
+  const c = ctx();
+  if (!c) return readOrders();
+  const tableId = b.tableId ?? readTables().find((t) => t.no === Number(b.table.match(/\d+/)?.[0] ?? 0))?.id;
+  if (tableId) {
+    // Stolda ochiq chek bo'lsa backend 409 qaytaradi — e'tiborsiz qoldiriladi
+    const made = await api<{ id: number }>("/v1/venue/orders", { method: "POST", query: { venue_id: c.venueId }, body: { table_id: tableId, guests_count: b.people } }).catch(() => null);
+    if (made) cacheWrite(accountKey(LINKS), { ...cacheRead<Record<string, string>>(accountKey(LINKS), {}), [String(made.id)]: b.id });
+  }
+  return syncOrders();
 }
 
 export type TableState = { t: TableInfo; order?: Order; state: "bosh" | "jarayonda" | "tolov" | "yakunlangan" };

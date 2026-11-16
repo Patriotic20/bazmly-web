@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { ChevronDownIcon, LocationIcon } from "@bazmly/ui/icons";
 import { useToast } from "@bazmly/ui/Toast";
-import { readLocation, regionById, REGIONS, saveLocation, type UserLocation } from "@bazmly/api/regions";
+import { type District, fetchDistricts, readLocation, regionById, REGIONS, saveLocation, type UserLocation } from "@bazmly/api/regions";
 
 // Figma: "Toshkent" tugmasi → viloyat va tuman tanlash oynasi (415×488), pastda "Tasdiqlash"
 export function LocationPicker() {
@@ -12,9 +12,19 @@ export function LocationPicker() {
   const [open, setOpen] = useState(false);
   const [region, setRegion] = useState<string | undefined>();
   const [district, setDistrict] = useState<string | undefined>();
+  const [districts, setDistricts] = useState<District[]>([]);
   const box = useRef<HTMLDivElement>(null);
 
   useEffect(() => setLoc(readLocation()), []);
+
+  // Tanlangan viloyat tumanlari — backenddan
+  useEffect(() => {
+    setDistricts([]);
+    if (!region) return;
+    let alive = true;
+    fetchDistricts(region).then((d) => { if (alive) setDistricts(d); });
+    return () => { alive = false; };
+  }, [region]);
 
   useEffect(() => {
     if (!open) return;
@@ -31,7 +41,9 @@ export function LocationPicker() {
   };
   const confirm = () => {
     if (!region) return toast("Viloyatni belgilang");
-    const next = { region, district };
+    const d = districts.find((x) => x.name === district);
+    const ok = d && d.id > 0 && Number.isFinite(d.lat);
+    const next: UserLocation = { region, district, ...(ok ? { districtId: d.id, lat: d.lat, lng: d.lng } : {}) };
     saveLocation(next); setLoc(next); setOpen(false);
     toast(`Joylashuv: ${regionById(region).short}${district ? `, ${district}` : ""}`);
   };
@@ -52,7 +64,7 @@ export function LocationPicker() {
           />
           <Select
             className="mt-[30px]" label="Tummani kiriting" value={district} disabled={!r}
-            options={(r?.districts ?? []).map((d) => ({ id: d, label: d }))}
+            options={districts.map((d) => ({ id: d.name, label: d.name }))}
             onChange={setDistrict}
           />
           <button type="button" onClick={confirm} className="mx-auto mt-auto h-[55px] w-full max-w-[356.5px] rounded-[16px] bg-brand text-[22px] text-white transition-colors hover:bg-brand-600 sm:-mx-[5px] sm:w-[356.5px] sm:text-[24px]">

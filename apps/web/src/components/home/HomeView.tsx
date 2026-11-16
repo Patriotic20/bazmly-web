@@ -9,7 +9,8 @@ import { PromoCarousel } from "./PromoCarousel";
 import { Empty, Section } from "./Section";
 import { VenueCard } from "./VenueCard";
 import { ScrollRow } from "./ScrollRow";
-import { allHalls, allVenues, topHalls, topRestaurants } from "@bazmly/api/venues";
+import type { GridVenue, Venue } from "@bazmly/api/venues";
+import { useVenues } from "./useVenues";
 
 type Tab = "all" | "restoran" | "toyxona";
 const TABS: { id: Tab; label: string }[] = [
@@ -38,10 +39,15 @@ export function HomeView() {
 
   const booked = useNextBooking();
   const match = (name: string) => !q || name.toLowerCase().includes(q);
-  const rest = useMemo(() => topRestaurants.filter((v) => match(v.name)), [q]); // eslint-disable-line react-hooks/exhaustive-deps
-  const halls = useMemo(() => topHalls.filter((v) => match(v.name)), [q]); // eslint-disable-line react-hooks/exhaustive-deps
+  const topRestaurants = useVenues<Venue>("restoran", "top");
+  const topHalls = useVenues<Venue>("toyxona", "top");
+  const allVenues = useVenues<GridVenue>("restoran", "grid");
+  const allHalls = useVenues<GridVenue>("toyxona", "grid");
+  const rest = useMemo(() => (topRestaurants ?? []).filter((v) => match(v.name)), [q, topRestaurants]); // eslint-disable-line react-hooks/exhaustive-deps
+  const halls = useMemo(() => (topHalls ?? []).filter((v) => match(v.name)), [q, topHalls]); // eslint-disable-line react-hooks/exhaustive-deps
   // To'yxonalar tabida pastdagi ro'yxat — faqat to'yxonalar
-  const grid = useMemo(() => (tab === "toyxona" ? allHalls : allVenues).filter((v) => match(v.name)), [q, tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  const gridSrc = tab === "toyxona" ? allHalls : allVenues;
+  const grid = useMemo(() => (gridSrc ?? []).filter((v) => match(v.name)), [q, gridSrc]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const showRest = true; // Figma: To‘yxonalar tabida ham Top Restoranlar qatori turadi
   const showHalls = tab !== "restoran";
@@ -97,7 +103,7 @@ export function HomeView() {
       {showRest && (
         <div className="mt-[30px]">
           <Section title="Top Restoranlar" moreHref="/restoranlar">
-            {rest.length ? (
+            {rest.length || !topRestaurants ? (
               <ScrollRow label="Top restoranlar">
                 {rest.map((v) => <VenueCard key={v.id} v={v} />)}
               </ScrollRow>
@@ -109,7 +115,7 @@ export function HomeView() {
       {showHalls && (
         <div className="mt-[30px]">
           <Section title="Top To‘yxonalar" moreHref="/toyxonalar">
-            {halls.length ? (
+            {halls.length || !topHalls ? (
               <ScrollRow label="Top to‘yxonalar">
                 {halls.map((v) => <VenueCard key={v.id} v={v} />)}
               </ScrollRow>
@@ -120,7 +126,7 @@ export function HomeView() {
 
       {showGrid && (
         <div className="mt-[30px] xl:pl-[1.5px]">
-          {grid.length ? (
+          {grid.length || !gridSrc ? (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-5 lg:grid-cols-4 lg:gap-8 xl:grid-cols-[repeat(5,215px)] xl:justify-between xl:gap-x-0 xl:gap-y-[49px]">
               {grid.map((v) => <GridCard key={v.id} v={v} />)}
             </div>

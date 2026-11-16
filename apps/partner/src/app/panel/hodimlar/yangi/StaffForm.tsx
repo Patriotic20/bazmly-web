@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { errorText } from "@bazmly/api/client";
 import { phoneTaken, readStaff, roleLabel, ROLES, saveStaff, type Role, type Staff } from "@bazmly/api/staff";
 import { ChevronRightIcon } from "@bazmly/ui/icons";
 import { useToast } from "@bazmly/ui/Toast";
@@ -56,14 +57,18 @@ export function StaffForm() {
   };
 
   const valid = name.trim().length >= 3 && digits.length === 9;
-  const submit = (e?: React.FormEvent) => {
+  const [busy, setBusy] = useState(false);
+  const submit = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!valid) return;
+    if (!valid || busy) return;
     const phone = `+998${digits}`;
     if (phoneTaken(phone, orig?.id)) return toast("Bu telefon raqam boshqa hodimga biriktirilgan");
     if (!role) { toast("Lavozimni tanlang"); go(true); return; }
-    // TODO: backend — POST /partner/staff (login va vaqtinchalik parol SMS orqali yuboriladi)
-    saveStaff({ id: orig?.id, name: name.trim().replace(/\s+/g, " "), phone, role, active, avatar: orig?.avatar });
+    // Backend: yangi hodim — taklifnoma (login va vaqtinchalik parol javobda qaytadi va keshda saqlanadi), tahrirlash — PATCH
+    setBusy(true);
+    try { await saveStaff({ id: orig?.id, name: name.trim().replace(/\s+/g, " "), phone, role, active, avatar: orig?.avatar }); }
+    catch (err) { setBusy(false); return toast(errorText(err)); }
+    setBusy(false);
     toast(orig ? "Hodim ma’lumotlari saqlandi" : `${name.trim()} qo‘shildi — login SMS orqali yuborildi`);
     router.push("/panel/hodimlar");
   };

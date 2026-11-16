@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { num, readSettings, type HallSettings } from "@bazmly/api/hall";
-import { daysText, hoursText, readAccount, totalSeats, updateAccount, type AdvanceDays, type PartnerAccount } from "@bazmly/api/partner";
+import { daysText, hoursText, readAccount, saveAccount, totalSeats, type AdvanceDays, type PartnerAccount } from "@bazmly/api/partner";
 import { ChevronRightIcon, LocationIcon } from "@bazmly/ui/icons";
 import { useToast } from "@bazmly/ui/Toast";
 import { fieldBox, fieldLabel } from "@/components/PartnerCard";
@@ -54,21 +54,21 @@ export default function ProfileEdit() {
   const [name, setName] = useState("");
   useEffect(() => { const a = readAccount(); setAcc(a); setName(a?.name ?? ""); if (a?.kind === "toyxona") setHs(readSettings()); }, []);
 
-  const patch = (p: Partial<PartnerAccount>) => {
-    const next = updateAccount(p);
+  const patch = async (p: Partial<PartnerAccount>) => {
+    const next = await saveAccount(p);
     if (!next) { toast("Saqlab bo‘lmadi"); return false; }
     setAcc(next); return true;
   };
-  const saveName = () => {
+  const saveName = async () => {
     const v = name.trim();
-    if (v.length < 2) { toast("Muassasa nomini kiriting"); setName(acc?.name ?? ""); }
-    else if (v !== acc?.name && patch({ name: v })) toast("Nom saqlandi");
     setEditing(false);
+    if (v.length < 2) { toast("Muassasa nomini kiriting"); setName(acc?.name ?? ""); }
+    else if (v !== acc?.name && (await patch({ name: v }))) toast("Nom saqlandi");
   };
   const pickImage = async (f?: File) => {
     if (!f) return;
     if (!f.type.startsWith("image/")) return toast("Faqat rasm faylini tanlang");
-    try { if (patch({ avatar: await shrinkImage(f, 480) })) toast("Rasm yangilandi"); } catch { toast("Rasmni o‘qib bo‘lmadi"); }
+    try { if (await patch({ avatar: await shrinkImage(f, 480) })) toast("Rasm yangilandi"); } catch { toast("Rasmni o‘qib bo‘lmadi"); }
   };
 
   if (!acc) return null;
@@ -161,7 +161,7 @@ export default function ProfileEdit() {
             <span id="lbl-adv" className={`${fieldLabel} tracking-[-0.3px]`}>Minimal oldindan band qilish vaqti</span>
             <div role="radiogroup" aria-labelledby="lbl-adv" className="mt-[15.5px] grid grid-cols-3 gap-[12px] sm:gap-[21px]">
               {([1, 2, 3] as AdvanceDays[]).map((n) => (
-                <Chip key={n} on={acc.minAdvance === n} onClick={() => { if (acc.minAdvance !== n) patch({ minAdvance: n }); }} className="pl-[21px]">{n} kun</Chip>
+                <Chip key={n} on={acc.minAdvance === n} onClick={() => { if (acc.minAdvance !== n) void patch({ minAdvance: n }); }} className="pl-[21px]">{n} kun</Chip>
               ))}
             </div>
           </div>
