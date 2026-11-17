@@ -2,7 +2,8 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { isSignedIn, refreshAccounts } from "@bazmly/api/partner";
+import { hallSynced, syncHall } from "@bazmly/api/hall";
+import { isSignedIn, readAccount, refreshAccounts } from "@bazmly/api/partner";
 import { Screen } from "@bazmly/ui/Fit";
 import { PanelHeader } from "@/components/PanelHeader";
 
@@ -14,7 +15,17 @@ export default function PanelLayout({ children }: { children: React.ReactNode })
   const router = useRouter();
   const pathname = usePathname();
   const [ok, setOk] = useState(false);
-  useEffect(() => { if (!isSignedIn()) router.replace("/"); else { setOk(true); void refreshAccounts(); } }, [router]);
+  useEffect(() => { if (isSignedIn()) void refreshAccounts(); }, []);
+  // To'yxona CRM ma'lumoti backenddan: birinchi marta yuklanguncha kutiladi, keyin keshdan darhol ochiladi va fonda yangilanadi
+  useEffect(() => {
+    if (!isSignedIn()) { router.replace("/"); return; }
+    if (readAccount()?.kind === "restoran") { setOk(true); return; }
+    if (hallSynced()) { setOk(true); void syncHall(); return; }
+    setOk(false);
+    let live = true;
+    void Promise.race([syncHall(), new Promise((r) => setTimeout(r, 10_000))]).finally(() => { if (live) setOk(true); });
+    return () => { live = false; };
+  }, [router, pathname]);
   if (!ok) return null;
   if (SCROLL_PAGES.includes(pathname)) return (
     <div className="min-h-svh pb-16">
