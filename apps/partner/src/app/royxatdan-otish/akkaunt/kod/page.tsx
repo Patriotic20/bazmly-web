@@ -2,47 +2,50 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { passwordError, phoneCheck, type PhoneCheckResult } from "@bazmly/api/auth";
 import { createAccountRemote } from "@bazmly/api/partner";
-import { focusFirstEmpty, OtpBoxes } from "@bazmly/ui/OtpBoxes";
 import { useToast } from "@bazmly/ui/Toast";
 import { PartnerCard, primaryBtn } from "@/components/PartnerCard";
+import { PasswordInput } from "@/components/PasswordInput";
 import { useDraft } from "@/components/useDraft";
 
-const LEN = 6;
-const COOLDOWN = 60;
+/** login — raqam ro'yxatdan o'tgan va paroli bor; set — eski akkaunt, parol o'rnatiladi; new — yangi akkaunt */
+type Mode = "login" | "set" | "new";
+const TEXT: Record<Mode, { title: string; hint: string }> = {
+  login: { title: "Parolni kiriting", hint: "Bu raqam ro‘yxatdan o‘tgan — akkauntingiz parolini kiriting." },
+  set: { title: "Parol o‘rnating", hint: "Endi akkauntga telefon raqami va shu parol bilan kirasiz." },
+  new: { title: "Parol o‘ylab toping", hint: "Akkauntga telefon raqami va shu parol bilan kirasiz." },
+};
 
-// Figma: "Akkaunt yaratish" — Send verification code (6 xonali SMS kod)
-export default function CodePage() {
+// Figma: "Akkaunt yaratish" — SMS kod o'rniga parol (login — telefon raqami)
+export default function PasswordPage() {
   const router = useRouter();
   const toast = useToast();
   const draft = useDraft("telefon");
-  const [code, setCode] = useState<string[]>(Array(LEN).fill(""));
+  const [check, setCheck] = useState<PhoneCheckResult | null>(null);
+  const [password, setPassword] = useState("");
+  const [repeat, setRepeat] = useState("");
   const [error, setError] = useState(false);
-  const [left, setLeft] = useState(COOLDOWN);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (left <= 0) return;
-    const t = setTimeout(() => setLeft((s) => s - 1), 1000);
-    return () => clearTimeout(t);
-  }, [left]);
+    if (!draft?.phone) return;
+    phoneCheck(draft.phone).then(setCheck).catch(() => toast("Raqamni tekshirib bo‘lmadi, qayta urinib ko‘ring"));
+  }, [draft?.phone, toast]);
 
-  const resend = () => {
-    if (left > 0) return toast(`Kodni ${left} soniyadan so‘ng qayta yuborish mumkin`);
-    // TODO: backend — POST /auth/partner/otp
-    setLeft(COOLDOWN);
-    toast("Kod qayta yuborildi");
-  };
-  const [busy, setBusy] = useState(false);
+  const mode: Mode = !check?.registered ? "new" : check.password_required ? "login" : "set";
+
   const submit = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (code.join("").length !== LEN) { setError(true); focusFirstEmpty(code); return toast("Kodni to‘liq kiriting"); }
-    if (busy) return;
-    // SMS kod backendda hali yo'q — istalgan 6 xonali kod qabul qilinadi; akkaunt backend'da yaratiladi
     if (!draft?.phone) return router.replace("/royxatdan-otish");
+    if (!check || busy) return;
+    const bad = mode === "login" ? (password ? null : "Parolni kiriting") : passwordError(password);
+    if (bad) { setError(true); return toast(bad); }
+    if (mode !== "login" && password !== repeat) { setError(true); return toast("Parollar bir xil emas"); }
     setBusy(true);
-    const acc = await createAccountRemote(draft.phone);
+    const acc = await createAccountRemote(draft.phone, false, password);
     setBusy(false);
-    if (!acc) return toast("Akkauntni yaratib bo‘lmadi");
+    if (!acc) return toast(mode === "login" ? "Parol noto‘g‘ri yoki akkauntni yaratib bo‘lmadi" : "Akkauntni yaratib bo‘lmadi");
     router.replace("/royxatdan-otish/tayyor");
   };
 
@@ -50,24 +53,23 @@ export default function CodePage() {
   return (
     <PartnerCard
       title="Akkaunt yaratish" smallTitle onBack={() => router.push("/royxatdan-otish/akkaunt")}
-      action={<button type="submit" form="code-form" className={primaryBtn}>Tasdiqlash</button>}
+      action={<button type="submit" form="code-form" disabled={!check || busy} className={primaryBtn}>Tasdiqlash</button>}
     >
       <form id="code-form" noValidate onSubmit={submit} className="mx-auto w-full max-w-[356.5px] sm:pt-[121px] sm:fit-tight:pt-[12px]">
         <h2 className="text-[26px] font-bold leading-[1.25] tracking-[-0.01em] text-black sm:text-[32px] sm:leading-[40px]">
-          Send verification<br className="hidden sm:block" />{" "}code
+          {check ? TEXT[mode].title : "Parol"}
         </h2>
-        <p className="mt-[10px] text-[16px] leading-[1.4] text-black sm:whitespace-nowrap sm:text-[20px] sm:leading-[25px] sm:tracking-[-0.3px]">
-          We’ll send a code to your<br className="hidden sm:block" />{" "}phone number to verify your account.
+        <p className="mt-[10px] text-[16px] leading-[1.4] text-black sm:text-[20px] sm:leading-[25px] sm:tracking-[-0.3px]">
+          {check ? TEXT[mode].hint : "Raqam tekshirilmoqda…"}
         </p>
-        <p className="sr-only">{draft.phone} raqamiga yuborildi</p>
-        <div className="mt-[20px]">
-          <OtpBoxes value={code} onChange={(v) => { setCode(v); setError(false); }} error={error} />
-        </div>
-        <div className="mt-[19px] text-center">
-          <button type="button" onClick={resend} aria-describedby="resend-hint" className="text-[16px] leading-[20px] text-brand hover:underline">
-            Resent code
-          </button>
-          <span id="resend-hint" className="sr-only">{left > 0 ? `${left} soniyadan so‘ng` : ""}</span>
+        <p className="mt-[6px] text-[15px] text-[#667085] tabular-nums">{draft.phone?.replace(/^\+998(\d{2})(\d{3})(\d{2})(\d{2})$/, "+998 $1 $2 $3 $4")}</p>
+        <div className="mt-[20px] flex flex-col gap-[12px]">
+          <PasswordInput value={password} onChange={(v) => { setPassword(v); setError(false); }} invalid={error} autoFocus
+            autoComplete={mode === "login" ? "current-password" : "new-password"} />
+          {check && mode !== "login" && (
+            <PasswordInput value={repeat} onChange={(v) => { setRepeat(v); setError(false); }} invalid={error}
+              autoComplete="new-password" placeholder="Parolni takrorlang" />
+          )}
         </div>
         <button type="submit" hidden />
       </form>

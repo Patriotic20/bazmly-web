@@ -4,8 +4,8 @@
 // Backend: akkaunt = filial (`/v1/venue/venues`), egasi = tarmoq (`/v1/venue/groups`). Kirish — `/v1/auth/login`.
 // Sahifalar tez ochilishi uchun akkaunt ma'lumoti brauzer xotirasida ham saqlanadi (kesh) va kirishda yangilanadi.
 // SMS kod hozircha backendda yo'q — ekrandagi kod bosqichi namunaviy.
-import { login, logoutRemote, phoneCheck, register } from "./auth";
-import { api, isAuthed, toNum } from "./client";
+import { loginWithPassword, logoutRemote, phoneCheck, register } from "./auth";
+import { api, ApiError, isAuthed, toNum } from "./client";
 import {
   districtAddress, fromWorkingDays, putTables, putWorkingHours, resolveDistrict, uploadImage,
   type BGroup, type BTable, type BVenue, type BVenueDetail, type VenueTypeSlug,
@@ -212,13 +212,15 @@ export async function syncAccounts(phone: string, activeVenueId?: number): Promi
  * Ro'yxatdan o'tish (backend): telefon bo'yicha kirish yoki yangi foydalanuvchi, so'ng tarmoq + filial,
  * ish vaqti, stollar va boshlang'ich sozlash bosqichlari. `add` — kirgan egasi yangi akkaunt qo'shmoqda.
  */
-export async function createAccountRemote(phone: string, add = false): Promise<PartnerAccount | null> {
+export async function createAccountRemote(phone: string, add = false, password?: string): Promise<PartnerAccount | null> {
   const d = readDraft();
   if (!d.name || !d.kind || d.kind === "barchasi" || !d.address?.region) return null;
   try {
     if (!add || !isAuthed()) {
+      // Login — telefon raqami, parol bilan; raqam avval ro'yxatdan o'tgan bo'lsa shu parol bilan kiriladi
+      if (!password) return null;
       const chk = await phoneCheck(phone);
-      if (chk.registered) await login(phone); else await register(phone, d.name);
+      if (chk.registered) await loginWithPassword(phone, password, chk); else await register(phone, d.name, null, password);
     }
     const dist = await resolveDistrict(d.address.region, d.address.city);
     if (!dist) return null;
@@ -253,16 +255,19 @@ export async function createAccountRemote(phone: string, add = false): Promise<P
 
 /** Ro'yxatdan o'tishning barcha bosqichlari to'ldirilganmi */
 export const draftReady = (d: PartnerDraft) => !!(d.name && d.kind && d.address?.region && d.seats && d.hours && d.days && d.minAdvance);
-/** Kirish (backend): ro'yxatdan o'tgan telefon bo'lsa — token olinadi va akkauntlar yuklanadi */
-export async function signIn(phone: string): Promise<boolean> {
+export type SignInResult = "ok" | "no-account" | "bad-password" | "error";
+/** Kirish (backend): telefon + parol. Parolsiz yaratilgan eski akkauntda kiritilgan parol o'rnatiladi. */
+export async function signIn(phone: string, password: string): Promise<SignInResult> {
   try {
     const chk = await phoneCheck(phone);
-    if (!chk.registered) return false;
-    await login(phone);
+    if (!chk.registered) return "no-account";
+    await loginWithPassword(phone, password, chk);
     const list = await syncAccounts(phone);
-    if (!list.length) { await logoutRemote(); return false; }
-    return true;
-  } catch { return false; }
+    if (!list.length) { await logoutRemote(); return "no-account"; }
+    return "ok";
+  } catch (e) {
+    return e instanceof ApiError && (e.status === 401 || e.status === 403) ? "bad-password" : "error";
+  }
 }
 /** Panelga kirganda keshdagi akkauntlarni backend'dan yangilaydi (fon rejimida) */
 export function refreshAccounts() {

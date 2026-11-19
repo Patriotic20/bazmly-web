@@ -20,7 +20,6 @@ export default function PhonePage() {
   const submit = (e?: React.FormEvent) => {
     e?.preventDefault();
     if (digits.length !== 9) return setError("Telefon raqamni to‘liq kiriting");
-    // TODO: backend — POST /auth/partner/otp
     saveDraft({ phone: `+998${digits}` });
     router.push("/royxatdan-otish/akkaunt/kod");
   };

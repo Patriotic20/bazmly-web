@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { AuthCard, primaryBtn, textInput } from "@/components/auth/AuthCard";
-import { register } from "@bazmly/api/auth";
+import { heldPassword, holdPassword, register } from "@bazmly/api/auth";
 import { errorText } from "@bazmly/api/client";
 import { syncMe } from "@bazmly/api/user";
 import { PHONE_KEY } from "../RegisterForm";
@@ -18,6 +18,8 @@ export function NameForm() {
     let phone: string | null = null;
     try { phone = sessionStorage.getItem(PHONE_KEY); } catch {}
     if (!phone) router.replace("/royxatdan-otish");
+    // Parol oldingi bosqichda kiritiladi (faqat xotirada) — sahifa yangilansa qayta so'raladi
+    else if (!heldPassword()) router.replace("/royxatdan-otish/kod");
   }, [router]);
 
   const submit = async (e: React.FormEvent) => {
@@ -31,7 +33,8 @@ export function NameForm() {
     busy.current = true;
     try {
       const phone = sessionStorage.getItem(PHONE_KEY) ?? "";
-      await register(phone, value);
+      await register(phone, value, null, heldPassword() ?? undefined);
+      holdPassword(null);
       await syncMe();
       sessionStorage.removeItem(PHONE_KEY);
       router.replace("/");

@@ -2,106 +2,89 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { AuthCard, primaryBtn } from "@/components/auth/AuthCard";
-import { login, phoneCheck } from "@bazmly/api/auth";
+import { AuthCard, primaryBtn, textInput } from "@/components/auth/AuthCard";
+import { holdPassword, loginWithPassword, passwordError, phoneCheck, type PhoneCheckResult } from "@bazmly/api/auth";
 import { errorText } from "@bazmly/api/client";
 import { syncMe } from "@bazmly/api/user";
 import { PHONE_KEY } from "../RegisterForm";
 
-const LEN = 6;
-const COOLDOWN = 60;
+/** login — parol bor akkaunt; set — eski (parolsiz) akkaunt, parol o'rnatiladi; new — yangi foydalanuvchi */
+type Mode = "login" | "set" | "new";
+
+const TEXT: Record<Mode, { title: string; hint: string }> = {
+  login: { title: "Parolni kiriting", hint: "Akkauntingizga kirish uchun parolingizni kiriting." },
+  set: { title: "Parol o‘rnating", hint: "Endi akkauntingizga telefon raqami va shu parol bilan kirasiz." },
+  new: { title: "Parol o‘ylab toping", hint: "Keyingi safar telefon raqami va shu parol bilan kirasiz." },
+};
+
+function EyeButton({ shown, onClick }: { shown: boolean; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} aria-label={shown ? "Parolni yashirish" : "Parolni ko‘rsatish"}
+      className="absolute right-[14px] top-1/2 grid size-[32px] -translate-y-1/2 place-items-center text-[#98A2B3] hover:text-brand dark:text-[#8A8A8A]">
+      <svg viewBox="0 0 24 24" className="size-[22px]" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" />
+        <circle cx="12" cy="12" r="3" />
+        {shown && <path d="M3 3l18 18" />}
+      </svg>
+    </button>
+  );
+}
 
 export function CodeForm() {
   const router = useRouter();
-  const [code, setCode] = useState<string[]>(Array(LEN).fill(""));
+  const [phone, setPhone] = useState("");
+  const [check, setCheck] = useState<PhoneCheckResult | null>(null);
+  const [password, setPw] = useState("");
+  const [repeat, setRepeat] = useState("");
+  const [shown, setShown] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [left, setLeft] = useState(COOLDOWN);
-  const [toast, setToast] = useState<string | null>(null);
-  const refs = useRef<(HTMLInputElement | null)[]>([]);
-  const busy = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
 
-  // Telefon raqamisiz bu sahifaga kirilsa — orqaga
+  // Telefon raqamisiz bu sahifaga kirilsa — orqaga; raqam bo'lsa — akkaunt bor-yo'qligi tekshiriladi
   useEffect(() => {
-    let phone: string | null = null;
-    try { phone = sessionStorage.getItem(PHONE_KEY); } catch {}
-    if (!phone) router.replace("/royxatdan-otish");
-    else refs.current[0]?.focus();
+    let p: string | null = null;
+    try { p = sessionStorage.getItem(PHONE_KEY); } catch {}
+    if (!p) { router.replace("/royxatdan-otish"); return; }
+    setPhone(p);
+    phoneCheck(p).then(setCheck).catch((err) => setError(errorText(err)));
   }, [router]);
+  useEffect(() => { if (check) input.current?.focus(); }, [check]);
 
-  useEffect(() => {
-    if (left <= 0) return;
-    const t = setTimeout(() => setLeft((s) => s - 1), 1000);
-    return () => clearTimeout(t);
-  }, [left]);
-
-  const fill = (start: number, digits: string) => {
-    const next = [...code];
-    let i = start;
-    for (const d of digits) {
-      if (i >= LEN) break;
-      next[i++] = d;
-    }
-    setCode(next);
-    setError(null);
-    refs.current[Math.min(i, LEN - 1)]?.focus();
-  };
-
-  const onChange = (i: number, v: string) => {
-    const digits = v.replace(/\D/g, "");
-    if (!digits) {
-      const next = [...code];
-      next[i] = "";
-      setCode(next);
-      return;
-    }
-    fill(i, digits);
-  };
-
-  const onKeyDown = (i: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Backspace" && !code[i] && i > 0) {
-      e.preventDefault();
-      const next = [...code];
-      next[i - 1] = "";
-      setCode(next);
-      refs.current[i - 1]?.focus();
-    } else if (e.key === "ArrowLeft" && i > 0) refs.current[i - 1]?.focus();
-    else if (e.key === "ArrowRight" && i < LEN - 1) refs.current[i + 1]?.focus();
-  };
-
-  const resend = () => {
-    if (left > 0) return;
-    // TODO: backend — POST /auth/send-code
-    setLeft(COOLDOWN);
-    setToast("Kod qayta yuborildi");
-    setTimeout(() => setToast(null), 2500);
-  };
+  const mode: Mode = !check?.registered ? "new" : check.password_required ? "login" : "set";
+  const confirm = mode !== "login";
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const value = code.join("");
-    if (value.length !== LEN) {
-      setError("Kodni to‘liq kiriting");
-      refs.current[code.findIndex((d) => !d)]?.focus();
-      return;
-    }
-    // SMS kod backendda hali yo'q — istalgan 6 xonali kod qabul qilinadi.
-    // Raqam ro'yxatdan o'tgan bo'lsa — darhol kirish, aks holda ism bosqichi.
-    if (busy.current) return;
-    busy.current = true;
+    if (!check || busy) return;
+    const bad = mode === "login" ? (password ? null : "Parolni kiriting") : passwordError(password);
+    if (bad) { setError(bad); input.current?.focus(); return; }
+    if (confirm && password !== repeat) { setError("Parollar bir xil emas"); return; }
+    // Yangi foydalanuvchi — parol ism bosqichigacha xotirada turadi, ro'yxatdan o'tishda yuboriladi
+    if (mode === "new") { holdPassword(password); router.push("/royxatdan-otish/ism"); return; }
+    setBusy(true);
     try {
-      const phone = sessionStorage.getItem(PHONE_KEY) ?? "";
-      const check = await phoneCheck(phone);
-      if (!check.registered) return router.push("/royxatdan-otish/ism");
-      await login(phone);
+      await loginWithPassword(phone, password, check);
       await syncMe();
       sessionStorage.removeItem(PHONE_KEY);
       router.replace("/");
     } catch (err) {
       setError(errorText(err));
     } finally {
-      busy.current = false;
+      setBusy(false);
     }
   };
+
+  const field = (value: string, onChange: (v: string) => void, label: string, ref?: React.Ref<HTMLInputElement>, autoComplete = "current-password") => (
+    <div className="relative">
+      <input
+        ref={ref} type={shown ? "text" : "password"} autoComplete={autoComplete} placeholder={label} aria-label={label}
+        value={value} onChange={(e) => { onChange(e.target.value); setError(null); }} aria-invalid={!!error}
+        className={`w-full pr-[54px] ${textInput} ${error ? "border-red-500" : ""}`}
+      />
+      <EyeButton shown={shown} onClick={() => setShown((s) => !s)} />
+    </div>
+  );
 
   return (
     <AuthCard onSubmit={submit}>
@@ -118,63 +101,26 @@ export function CodeForm() {
         </button>
 
         <h1 className="mt-[20px] text-[26px] font-bold leading-[1.25] tracking-[-0.01em] text-black dark:text-[#FFFFFF] sm:whitespace-nowrap sm:text-[32px] sm:leading-[40px]">
-          Send verification
-          <br className="hidden sm:block" />{" "}
-          code
+          {check ? TEXT[mode].title : "Parol"}
         </h1>
-        <p className="mt-[10px] text-[16px] leading-[1.4] text-black dark:text-[#FFFFFF] sm:whitespace-nowrap sm:text-[20px] sm:leading-[25px] sm:tracking-[-0.3px]">
-          We’ll send a code to your
-          <br className="hidden sm:block" />{" "}
-          phone number to verify your account.
+        <p className="mt-[10px] text-[16px] leading-[1.4] text-black dark:text-[#FFFFFF] sm:text-[20px] sm:leading-[25px] sm:tracking-[-0.3px]">
+          {check ? TEXT[mode].hint : "Raqam tekshirilmoqda…"}
         </p>
+        {phone && <p className="mt-[6px] text-[15px] text-[#667085] dark:text-[#B0B0B0] tabular-nums">{phone.replace(/^\+998(\d{2})(\d{3})(\d{2})(\d{2})$/, "+998 $1 $2 $3 $4")}</p>}
 
-        <div className="mt-[20px] flex justify-between gap-1.5" role="group" aria-label="Tasdiqlash kodi">
-          {code.map((d, i) => (
-            <input
-              key={i}
-              ref={(el) => { refs.current[i] = el; }}
-              value={d}
-              inputMode="numeric"
-              autoComplete={i === 0 ? "one-time-code" : "off"}
-              maxLength={LEN}
-              aria-label={`${i + 1}-raqam`}
-              onChange={(e) => onChange(i, e.target.value)}
-              onKeyDown={(e) => onKeyDown(i, e)}
-              onFocus={(e) => e.target.select()}
-              onPaste={(e) => {
-                e.preventDefault();
-                fill(i, e.clipboardData.getData("text").replace(/\D/g, ""));
-              }}
-              className={`h-[56px] w-full min-w-0 max-w-[55px] flex-1 rounded-[12px] border sm:h-[62px] bg-[#FDFAFE] dark:bg-[#2C2C2C] text-center text-[24px] font-medium text-brand caret-brand outline-none transition-colors focus:border-brand dark:text-white dark:caret-white dark:focus:border-white ${
-                d ? "border-brand dark:border-white" : error ? "border-red-500" : "border-[#D0D5DD] dark:border-[#6C6C6C]"
-              }`}
-            />
-          ))}
+        <div className="mt-[20px] flex flex-col gap-[12px]">
+          {field(password, setPw, "Parol", input, mode === "login" ? "current-password" : "new-password")}
+          {check && confirm && field(repeat, setRepeat, "Parolni takrorlang", undefined, "new-password")}
         </div>
-
-        <button
-          type="button"
-          onClick={resend}
-          disabled={left > 0}
-          className="mt-[20px] block h-[20px] w-full text-center text-[16px] font-medium leading-[20px] text-brand disabled:text-brand/60 dark:text-white dark:disabled:text-white/60"
-        >
-          Resent code{left > 0 ? ` (${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")})` : ""}
-        </button>
 
         {error && (
           <p role="alert" className="mt-[12px] text-center text-[14px] text-red-600">{error}</p>
         )}
       </div>
 
-      <button type="submit" className={`mt-10 sm:mt-[111px] ${primaryBtn}`}>
+      <button type="submit" disabled={!check || busy} className={`mt-10 sm:mt-[111px] ${primaryBtn} disabled:opacity-60`}>
         Next
       </button>
-
-      {toast && (
-        <div role="status" className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 whitespace-nowrap rounded-full bg-ink px-5 py-2.5 text-[14px] text-white">
-          {toast}
-        </div>
-      )}
     </AuthCard>
   );
 }
