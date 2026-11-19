@@ -13,6 +13,9 @@ function formatPhone(digits: string) {
 
 export const PHONE_KEY = "bazmly:pending-phone";
 
+// Apple / Google orqali kirish hali ishlamaydi — tugmalar yashirilgan. Ulanganda true qiling.
+const SOCIAL_LOGIN = false;
+
 export function RegisterForm() {
   const router = useRouter();
   const [digits, setDigits] = useState("");
@@ -66,23 +69,27 @@ export function RegisterForm() {
           />
         </div>
 
-        <button
-          type="button"
-          onClick={() => showSoon("Apple")}
-          className="flex h-[55px] w-full items-center justify-center gap-[12px] rounded-[16px] border border-[#EAECF0] dark:border-[#6C6C6C] bg-[#FDFAFE] dark:bg-[#2C2C2C] text-[18px] font-semibold sm:gap-[14px] sm:text-[20px] leading-[20px] text-black dark:text-[#FFFFFF] transition-colors hover:bg-[#F6F3F8] dark:hover:bg-[#393939]"
-        >
-          <Image src="/icons/apple.png" alt="" width={23} height={27} className="dark:invert" />
-          Continue with Apple
-        </button>
+        {SOCIAL_LOGIN && (
+          <>
+            <button
+              type="button"
+              onClick={() => showSoon("Apple")}
+              className="flex h-[55px] w-full items-center justify-center gap-[12px] rounded-[16px] border border-[#EAECF0] dark:border-[#6C6C6C] bg-[#FDFAFE] dark:bg-[#2C2C2C] text-[18px] font-semibold sm:gap-[14px] sm:text-[20px] leading-[20px] text-black dark:text-[#FFFFFF] transition-colors hover:bg-[#F6F3F8] dark:hover:bg-[#393939]"
+            >
+              <Image src="/icons/apple.png" alt="" width={23} height={27} className="dark:invert" />
+              Continue with Apple
+            </button>
 
-        <button
-          type="button"
-          onClick={() => showSoon("Google")}
-          className="flex h-[55px] w-full items-center justify-center gap-[12px] rounded-[16px] border border-[#EAECF0] dark:border-[#6C6C6C] bg-[#FDFAFE] dark:bg-[#2C2C2C] text-[18px] font-semibold sm:gap-[14px] sm:text-[20px] leading-[20px] text-black dark:text-[#FFFFFF] transition-colors hover:bg-[#F6F3F8] dark:hover:bg-[#393939]"
-        >
-          <Image src="/icons/google.png" alt="" width={28} height={27} />
-          Continue with Google
-        </button>
+            <button
+              type="button"
+              onClick={() => showSoon("Google")}
+              className="flex h-[55px] w-full items-center justify-center gap-[12px] rounded-[16px] border border-[#EAECF0] dark:border-[#6C6C6C] bg-[#FDFAFE] dark:bg-[#2C2C2C] text-[18px] font-semibold sm:gap-[14px] sm:text-[20px] leading-[20px] text-black dark:text-[#FFFFFF] transition-colors hover:bg-[#F6F3F8] dark:hover:bg-[#393939]"
+            >
+              <Image src="/icons/google.png" alt="" width={28} height={27} />
+              Continue with Google
+            </button>
+          </>
+        )}
 
         {error && (
           <p id="phone-error" role="alert" className="-mt-2 text-[14px] text-red-600">
